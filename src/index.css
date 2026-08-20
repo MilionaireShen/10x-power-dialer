@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-bg: #f4f5f9;
+  --color-bg-secondary: #ffffff;
+  --color-card: #ffffff;
+  --color-card-hover: #fafafb;
+
+  --color-accent: #5b3fe0;
+  --color-accent-light: #7c5cf0;
+  --color-accent-dark: #4830b8;
+  --color-accent-tint: #f0edfc;
+
+  --color-gold: #b45309;
+  --color-gold-light: #d97706;
+  --color-gold-tint: #fef3e2;
+
+  --color-success: #059669;
+  --color-success-tint: #ecfdf5;
+  --color-warning: #d97706;
+  --color-warning-tint: #fffbeb;
+  --color-danger: #dc2626;
+  --color-danger-tint: #fef2f2;
+  --color-info: #2563eb;
+  --color-info-tint: #eff6ff;
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #64748b;
+  --color-text-tertiary: #94a3b8;
+
+  --color-border: #e2e5eb;
+  --color-border-strong: #d5d9e1;
+
+  /* agent status color scale */
+  --color-status-available: #2563eb;
+  --color-status-call-1: #86efac;
+  --color-status-call-2: #16a34a;
+  --color-status-call-3: #15803d;
+  --color-status-call-4: #14532d;
+  --color-status-unready-1: #fca5a5;
+  --color-status-unready-2: #991b1b;
+  --color-status-lunch-1: #fde68a;
+  --color-status-lunch-2: #b45309;
+  --color-status-break-1: #fed7aa;
+  --color-status-break-2: #c2410c;
+  --color-status-loggedout: #6b7280;
+
+  --radius-card: 12px;
+  --radius-pill: 99px;
+
+  --animate-pulse-slow: pulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-spin-slow: spin 1.6s linear infinite;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--color-border-strong);
+    border-radius: 99px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-[12px] border border-[var(--color-border)] bg-[var(--color-card)] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)];
+  }
+
+  .btn,
+  .btn-gold,
+  .btn-purple,
+  .btn-gray,
+  .btn-danger,
+  .btn-success,
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 rounded-[99px] px-5 py-2.5 text-sm font-semibold transition-all duration-200 ease-out disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-gold {
+    @apply bg-[var(--color-gold)] text-white hover:bg-[var(--color-gold-light)];
+  }
+
+  .btn-purple,
+  .btn-gold ~ .btn-purple {
+    @apply bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-dark)];
+  }
+
+  .btn-gray {
+    @apply border border-[var(--color-border-strong)] bg-white text-[var(--color-text-primary)] hover:bg-[var(--color-bg)];
+  }
+
+  .btn-outline {
+    @apply border border-[var(--color-accent)] text-[var(--color-accent)] bg-white hover:bg-[var(--color-accent-tint)];
+  }
+
+  .btn-danger {
+    @apply bg-[var(--color-danger)] text-white hover:brightness-90;
+  }
+
+  .btn-success {
+    @apply bg-[var(--color-success)] text-white hover:brightness-90;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-[99px] px-3 py-1 text-xs font-semibold;
+  }
+
+  .input-field {
+    @apply w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3.5 py-2.5 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] outline-none transition-all duration-200 focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/15;
+  }
+
+  .side-panel-overlay {
+    @apply fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-[2px];
+  }
+
+  .side-panel {
+    @apply fixed right-0 top-0 z-50 h-full w-full max-w-md overflow-y-auto bg-white border-l border-[var(--color-border)] shadow-2xl;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-toast-in {
+  animation: toast-in 0.3s ease-out;
+}
+
+@keyframes flash-red {
+  0%,
+  100% {
+    background-color: var(--color-danger-tint);
+  }
+  50% {
+    background-color: #fecaca;
+  }
+}
+.animate-flash-red {
+  animation: flash-red 0.6s ease-in-out infinite;
+}
+
+/* Hotkey button flash — brief white overlay confirming a keypress landed. */
+@keyframes hotkey-flash {
+  0% {
+    background-color: rgba(255, 255, 255, 0.9);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.animate-hotkey-flash {
+  animation: hotkey-flash 0.25s ease-out;
+}
+
+/* Wrap-up timer at <=10s remaining. */
+@keyframes timer-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.animate-timer-pulse {
+  animation: timer-pulse 0.8s ease-in-out infinite;
+}
+
+/* Wrap-up timer box at <=5s remaining. */
+@keyframes timer-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20%,
+  60% {
+    transform: translateX(-4px);
+  }
+  40%,
+  80% {
+    transform: translateX(4px);
+  }
+}
+.animate-timer-shake {
+  animation: timer-shake 0.4s ease-in-out infinite;
+}
