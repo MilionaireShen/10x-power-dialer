@@ -3,6 +3,10 @@ import SidePanel from "../components/SidePanel";
 import { useAppData } from "./AppDataContext";
 import { useAuth } from "./AuthContext";
 import { useToast } from "./ToastContext";
+import monitorService from "../services/monitorService";
+
+const MONITOR_ACTION = { listen: monitorService.listen, whisper: monitorService.whisper, barge: monitorService.barge };
+const MONITOR_VERB = { listen: "listening", whisper: "whispering", barge: "barge" };
 
 const FORCE_STATUS_OPTIONS = ["available", "unready", "lunch", "break", "manual_dial", "logged_out"];
 const FORCE_STATUS_LABEL = {
@@ -19,7 +23,7 @@ const FORCE_STATUS_LABEL = {
 // the monitoring/message/force-status/callback-queue panels defined once.
 export function useAgentActions() {
   const { user } = useAuth();
-  const { callbacks, startMonitoring, sendAgentMessage, forceAgentStatus, forceAgentLogout } = useAppData();
+  const { callbacks, startMonitoring, stopMonitoring, sendAgentMessage, forceAgentStatus, forceAgentLogout } = useAppData();
   const { notify } = useToast();
   const [messageTarget, setMessageTarget] = useState(null);
   const [statusTarget, setStatusTarget] = useState(null);
@@ -30,7 +34,11 @@ export function useAgentActions() {
       notify(`${agent.name} is not currently on a call.`, "warning");
       return;
     }
-    startMonitoring(user.name, agent.name, type);
+    const sessionId = startMonitoring(user.name, agent.name, type, agent.id);
+    MONITOR_ACTION[type]?.(agent.id).catch((err) => {
+      notify(err?.message || `Could not start ${MONITOR_VERB[type]} for ${agent.name}.`, "error");
+      stopMonitoring(sessionId);
+    });
     notify(`${type === "listen" ? "Listening to" : type === "whisper" ? "Whispering to" : "Barged into"} ${agent.name}'s call.`, "info");
   };
 

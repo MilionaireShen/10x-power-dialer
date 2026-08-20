@@ -97,14 +97,21 @@ export function AppDataProvider({ children }) {
   }, []);
 
   const startMonitoring = useCallback(
-    (admin, agentName, type) => {
-      const session = { id: nextId("mon"), admin, agentName, type, startedAt: Date.now() };
+    (admin, agentName, type, agentId) => {
+      const session = { id: nextId("mon"), admin, agentName, agentId, type, startedAt: Date.now() };
       setMonitoringSessions((prev) => [...prev, session]);
       logActivity({ admin, action: `Started ${type}`, targetAgent: agentName, details: `${type} session started` });
       return session.id;
     },
     [logActivity]
   );
+
+  // Switches an in-progress monitoring session between listen/whisper/barge
+  // without resetting its startedAt — the floating bar's elapsed timer keeps
+  // counting continuously across a mode switch, matching one real session.
+  const switchMonitoringMode = useCallback((id, type) => {
+    setMonitoringSessions((prev) => prev.map((s) => (s.id === id ? { ...s, type } : s)));
+  }, []);
 
   const stopMonitoring = useCallback(
     (id) => {
@@ -553,6 +560,7 @@ export function AppDataProvider({ children }) {
       monitoringSessions,
       startMonitoring,
       stopMonitoring,
+      switchMonitoringMode,
       agentMessages,
       sendAgentMessage,
       consumeAgentMessage,
@@ -629,6 +637,7 @@ export function AppDataProvider({ children }) {
       logActivity,
       startMonitoring,
       stopMonitoring,
+      switchMonitoringMode,
       sendAgentMessage,
       consumeAgentMessage,
       forceAgentStatus,

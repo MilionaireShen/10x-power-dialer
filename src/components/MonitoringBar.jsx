@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
-import { Headphones, Mic, MicOff, X } from "lucide-react";
+import { Headphones, Radio, LogIn, Mic, MicOff, X } from "lucide-react";
 import { secondsSince, formatHMS } from "../lib/statusColors";
 
 const TYPE_LABEL = { listen: "Listening", whisper: "Whispering", barge: "Barged In" };
 
+// Same icon set/meaning as AgentMonitorTable's Listen/Whisper/Barge column.
+const MODES = [
+  { key: "listen", icon: Headphones, label: "Listen" },
+  { key: "whisper", icon: Radio, label: "Whisper" },
+  { key: "barge", icon: LogIn, label: "Barge" },
+];
+
 // Fixed at the top of the admin screen, stacked by index — an admin can
 // have several of these open at once, one per agent being monitored.
-export default function MonitoringBar({ session, index, onStop }) {
+export default function MonitoringBar({ session, index, onStop, onSwitchMode }) {
   const [muted, setMuted] = useState(false);
   const [, forceTick] = useState(0);
 
@@ -29,6 +36,27 @@ export default function MonitoringBar({ session, index, onStop }) {
         </p>
         <p className="text-xs text-[var(--color-text-tertiary)]">{formatHMS(secondsSince(session.startedAt))}</p>
       </div>
+      {onSwitchMode && (
+        <div className="flex items-center gap-0.5 rounded-full border border-[var(--color-border-strong)] p-0.5">
+          {MODES.map((m) => {
+            const Icon = m.icon;
+            const active = session.type === m.key;
+            return (
+              <button
+                key={m.key}
+                onClick={() => !active && onSwitchMode(m.key)}
+                aria-label={`Switch to ${m.label}`}
+                title={m.label}
+                className={`rounded-full p-1.5 transition-colors ${
+                  active ? "bg-[var(--color-accent)] text-white" : "text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg)]"
+                }`}
+              >
+                <Icon size={13} />
+              </button>
+            );
+          })}
+        </div>
+      )}
       <button
         onClick={() => setMuted((m) => !m)}
         className={`rounded-full p-2 transition-colors ${muted ? "bg-[var(--color-danger-tint)] text-[var(--color-danger)]" : "text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg)]"}`}

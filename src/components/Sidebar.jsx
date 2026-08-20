@@ -73,11 +73,60 @@ const NAV_BY_ROLE = {
 
 const ROLE_LABEL = { agent: "Agent", admin: "Admin", manager: "Manager", super_admin: "Super Admin" };
 
+const SOFTPHONE_BADGE = {
+  idle: { label: "Initializing…", color: "#6B7280" },
+  connecting: { label: "Connecting…", color: "#D97706" },
+  registered: { label: "Registered", color: "#059669" },
+  unregistered: { label: "Not Registered", color: "#6B7280" },
+  disconnected: { label: "Disconnected", color: "#DC2626" },
+  failed: { label: "Registration Failed", color: "#DC2626" },
+};
+
+// Persistent registration status for the WebRTC softphone — always visible
+// in the agent header regardless of which call state the dashboard is in.
+function SoftphoneBadge({ status, error, micBlocked, onRetry }) {
+  const meta = SOFTPHONE_BADGE[status] ?? SOFTPHONE_BADGE.idle;
+  const canRetry = ["failed", "disconnected", "unregistered"].includes(status) && onRetry;
+  return (
+    <div className="rounded-lg px-3 py-2" style={{ backgroundColor: `color-mix(in srgb, ${meta.color} 10%, white)` }}>
+      <div className="flex items-center gap-2">
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: meta.color }} />
+        <span className="text-xs font-semibold" style={{ color: meta.color }}>
+          {meta.label}
+        </span>
+      </div>
+      {error && <p className="mt-1 text-[11px] leading-snug text-[var(--color-text-tertiary)]">{error}</p>}
+      {/* Registration can succeed while the mic is still blocked — without
+          a mic no SDP offer can be built, so no call can ever be placed. */}
+      {micBlocked && (
+        <p className="mt-1 text-[11px] font-medium leading-snug text-[var(--color-danger)]">
+          Microphone blocked — calls cannot be placed. Allow mic access in your browser, then reload.
+        </p>
+      )}
+      {canRetry && (
+        <button onClick={onRetry} className="mt-1.5 text-[11px] font-medium text-[var(--color-accent)] hover:underline">
+          Retry Registration
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Agent-only props (open/onClose/onReopen/onOpenPanel/openPanel) drive the
 // collapse-to-edge-tab behavior and the Dashboard/Leaderboard overlay
 // triggers. Other roles never mount this component, so their arrays above
 // keep working exactly as plain route NavLinks with these props unused.
-export default function Sidebar({ open = true, onClose, onReopen, onOpenPanel, openPanel }) {
+export default function Sidebar({
+  open = true,
+  onClose,
+  onReopen,
+  onOpenPanel,
+  openPanel,
+  softphoneStatus,
+  softphoneError,
+  micBlocked,
+  onRetrySoftphone,
+}) {
   const { user, logout } = useAuth();
 
   if (!user) return null;
@@ -118,6 +167,12 @@ export default function Sidebar({ open = true, onClose, onReopen, onOpenPanel, o
           </button>
         )}
       </div>
+
+      {user.role === "agent" && softphoneStatus && (
+        <div className="border-b border-[var(--color-border)] px-3 py-3">
+          <SoftphoneBadge status={softphoneStatus} error={softphoneError} micBlocked={micBlocked} onRetry={onRetrySoftphone} />
+        </div>
+      )}
 
       <nav className="flex-1 space-y-0.5 px-3 py-4">
         {items.map((item) => {

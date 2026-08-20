@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import { useLogoutBanner } from "../lib/useLogoutBanner";
-import AuthShell, { AuthField, AuthDivider } from "../components/AuthShell";
+import AuthShell, { AuthField, AuthDivider, PasswordInput } from "../components/AuthShell";
 import LogoutBanner from "../components/LogoutBanner";
 
 export default function AdminLogin() {
@@ -51,14 +51,7 @@ export default function AdminLogin() {
           />
         </AuthField>
         <AuthField label="Password">
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            className="input-field"
-            autoComplete="current-password"
-          />
+          <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
         </AuthField>
 
         {error && <p className="text-sm text-[var(--color-danger)]">{error}</p>}

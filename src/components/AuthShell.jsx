@@ -1,4 +1,5 @@
-import { PhoneCall } from "lucide-react";
+import { useState } from "react";
+import { PhoneCall, Eye, EyeOff } from "lucide-react";
 
 // Shared split-panel shell used by all three role-specific login pages —
 // keeps the exact same branding/design system across /agent/login,
@@ -41,6 +42,32 @@ export function AuthField({ label, children }) {
     <div>
       <label className="mb-1.5 block text-sm font-medium text-[var(--color-text-primary)]">{label}</label>
       {children}
+    </div>
+  );
+}
+
+// Same input-field styling as every other auth input — just an inline
+// Eye/EyeOff toggle on the right, hidden by default.
+export function PasswordInput({ value, onChange, autoComplete, placeholder = "••••••••" }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className="input-field pr-10"
+        autoComplete={autoComplete}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)]"
+        aria-label={visible ? "Hide password" : "Show password"}
+      >
+        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
     </div>
   );
 }

@@ -23,7 +23,7 @@ import hotkeyService from "../services/hotkeyService";
 import scriptService from "../services/scriptService";
 import agentService from "../services/agentService";
 import reportService from "../services/reportService";
-import { useSoftphone } from "../lib/softphone";
+import { playDtmfTone, addedDtmfDigits } from "../lib/dtmf";
 
 // The dispositions table is seeded with slugs that don't exactly match this
 // frontend's DISPOSITIONS[].key values (e.g. "booked_appointment" vs
@@ -89,7 +89,6 @@ function buildManualDialLead(phone) {
 export default function AgentDashboard() {
   const { user, activeCampaignId, sessionId, logout } = useAuth();
   const {
-    campaigns,
     clients,
     customFields,
     callbacks,
@@ -107,12 +106,10 @@ export default function AgentDashboard() {
   } = useAppData();
   const { notify } = useToast();
   const navigate = useNavigate();
-  const { sidebarOpen, openPanel, closePanel } = useOutletContext();
-
-  // WebRTC softphone (SIP.js) registered against Telnyx — the one real
-  // call this screen can ever have live is whatever SimpleUser is tracking
-  // here; callState below just mirrors it for the rest of the UI.
-  const softphone = useSoftphone({ enabled: true });
+  // The softphone (SIP.js, registered against Telnyx) is instantiated once
+  // in AppLayout's AgentShell — not here — so registration survives across
+  // whichever agent page/panel is mounted; callState below just mirrors it.
+  const { sidebarOpen, openPanel, closePanel, softphone } = useOutletContext();
 
   // Real campaign record (name, wrap-up limit, SMS config, assigned
   // script) rather than the AppDataContext mock list — falls back to the
@@ -204,7 +201,7 @@ export default function AgentDashboard() {
   const [statusSince, setStatusSince] = useState(Date.now());
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
 
-  const [callState, setCallState] = useState("waiting"); // waiting | connected | wrapup
+  const [callState, setCallState] = useState("waiting"); // waiting | ringing | connected | wrapup
   const [callSeconds, setCallSeconds] = useState(0);
   const [wrapSeconds, setWrapSeconds] = useState(0);
   const [disposition, setDisposition] = useState(null);
@@ -215,7 +212,9 @@ export default function AgentDashboard() {
   const [smsSent, setSmsSent] = useState(false);
   const [smsNote, setSmsNote] = useState("");
   const [manualDialNumber, setManualDialNumber] = useState("");
+  const [dialedNumber, setDialedNumber] = useState("");
   const [dialing, setDialing] = useState(false);
+  const [dtmfInput, setDtmfInput] = useState("");
   const [isManualCall, setIsManualCall] = useState(false);
   // The DID Reputation Engine — never chosen by the agent. selectBestDID()
   // picks it the instant a call connects; recordCallOutcome() reports back
@@ -329,37 +328,57 @@ export default function AgentDashboard() {
     return () => clearInterval(id);
   }, [callState]);
 
-  // Bridges the softphone's real call state into this screen's own
-  // waiting/connected/wrapup machine — an incoming leg auto-answered by
-  // the softphone (or a Manual Dial call once it's actually picked up)
-  // flips this to "connected"; the call ending, whichever side hangs up,
-  // flips it to "wrapup" exactly like a manual End Call click would.
-  const wasCallActiveRef = useRef(false);
+  // Bridges the softphone's real call phase into this screen's own
+  // waiting/ringing/connected/wrapup machine — an outbound Manual Dial
+  // call (or an incoming leg auto-answered by the softphone) flips this to
+  // "ringing" then "connected"; the call ending, whichever side hangs up
+  // and whether or not it was ever answered, flips it to "wrapup" exactly
+  // like a manual End Call click would (so an unanswered dial still gets a
+  // disposition, e.g. "No Answer").
+  const prevPhaseRef = useRef("idle");
   useEffect(() => {
-    const wasActive = wasCallActiveRef.current;
-    wasCallActiveRef.current = softphone.callActive;
-    if (softphone.callActive && !wasActive) {
+    const prevPhase = prevPhaseRef.current;
+    const phase = softphone.callPhase;
+    prevPhaseRef.current = phase;
+    if (phase === prevPhase) return;
+
+    if (phase === "ringing") {
+      setCallState("ringing");
+    } else if (phase === "connected") {
       notify("Call connected.", "info");
       setCallState("connected");
       setCallSeconds(0);
+      setDtmfInput("");
       setSmsOpen(false);
       setSmsSent(false);
       setSmsNote("");
-    } else if (!softphone.callActive && wasActive) {
-      setCallState((cs) => (cs === "connected" ? "wrapup" : cs));
+    } else if (phase === "idle" && (prevPhase === "ringing" || prevPhase === "connected")) {
+      // A dial that died locally (mic blocked, no device) never put an
+      // INVITE on the wire, so there is no call to disposition — drop the
+      // agent back on the dial pad instead of trapping them in a wrap-up
+      // countdown for a call that never happened. A real call that rang
+      // and went unanswered still goes to wrap-up so it can be logged.
+      const failedBeforeConnecting = prevPhase === "ringing" && softphone.callFailure;
+      setCallState((cs) => {
+        if (cs !== "ringing" && cs !== "connected") return cs;
+        return failedBeforeConnecting ? "waiting" : "wrapup";
+      });
       setWrapSeconds(0);
+      setDtmfInput("");
+      setDialedNumber("");
       setDisposition(null);
       setNotes("");
       setSmsOpen(false);
       setScheduledCallbackAt(null);
     }
-  }, [softphone.callActive, notify]);
+  }, [softphone.callPhase, softphone.callFailure, notify]);
 
   // Whether the call was answered or the dial attempt failed/was rejected,
-  // the "dialing" phase is over once callActive settles either way.
+  // the local "dialing" flag (used just to disable the Dial button for the
+  // one render before the screen swaps to RingingState) is done either way.
   useEffect(() => {
     setDialing(false);
-  }, [softphone.callActive]);
+  }, [softphone.callPhase]);
 
   useEffect(() => {
     if (callState !== "wrapup" || sessionEnded) {
@@ -448,6 +467,25 @@ export default function AgentDashboard() {
     agentService.changeStatus(key).catch(() => {});
   };
 
+  // Plays a local touch-tone for each newly typed digit — backspace/clear
+  // never do (addedDtmfDigits returns "" for those). No live call exists
+  // yet at this point, so there's nothing to send real DTMF to.
+  const handleManualDialNumberChange = (next) => {
+    for (const digit of addedDtmfDigits(manualDialNumber, next)) playDtmfTone(digit);
+    setManualDialNumber(next);
+  };
+
+  // Same local tone as above, but this one's typed during a live call, so
+  // each digit also goes out as real DTMF over the SIP session (e.g. an
+  // IVR menu on the far end), not just played back locally.
+  const handleDtmfInputChange = (next) => {
+    for (const digit of addedDtmfDigits(dtmfInput, next)) {
+      playDtmfTone(digit);
+      softphone.sendDTMF(digit);
+    }
+    setDtmfInput(next);
+  };
+
   const handleDial = () => {
     const trimmed = manualDialNumber.trim();
     if (!trimmed) {
@@ -467,11 +505,13 @@ export default function AgentDashboard() {
     } else {
       setActiveDIDId(null);
     }
+    setDialedNumber(trimmed);
     setManualDialNumber("");
     setDialing(true);
     // The screen doesn't flip to "connected" here — the softphone bridge
-    // effect above does that once onCallAnswered actually fires, so this
-    // waits for the real call the same way an incoming leg does.
+    // effect above does that once onCallAnswered actually fires (moving
+    // through "ringing" first), so this waits for the real call the same
+    // way an incoming leg does.
     softphone.call(trimmed).catch((err) => {
       notify(err?.message || "Could not place the call.", "error");
     });
@@ -609,10 +649,6 @@ export default function AgentDashboard() {
     <div className="relative min-h-screen">
       <SessionEndedOverlay open={sessionEnded} onLogBackIn={handleLogBackIn} />
 
-      {/* Remote call audio only — local mic capture is handled internally
-          by SIP.js via getUserMedia, nothing to render for it. */}
-      <audio ref={softphone.remoteAudioRef} autoPlay style={{ display: "none" }} />
-
       <AgentStatsPanel
         open={openPanel === "dashboard"}
         onClose={closePanel}
@@ -645,10 +681,33 @@ export default function AgentDashboard() {
                 setStatusMenuOpen={setStatusMenuOpen}
                 onStatusChange={handleStatusChange}
                 manualDialNumber={manualDialNumber}
-                onManualDialNumberChange={setManualDialNumber}
+                onManualDialNumberChange={handleManualDialNumberChange}
                 onDial={handleDial}
                 dialing={dialing}
+                registered={softphone.status === "registered"}
               />
+            )}
+
+            {callState === "ringing" && <RingingState dialedNumber={dialedNumber} onHangup={handleEndCall} />}
+
+            {/* Temporary call-pipeline diagnostics. Values come from the live
+                RTCPeerConnection and the SIP session, not from this screen's
+                own state, so they show what the browser and carrier are
+                really doing rather than what the UI believes. Remove once
+                outbound audio is confirmed working end to end. */}
+            <CallDiagnostics
+              diagnostics={softphone.diagnostics}
+              softphoneStatus={softphone.status}
+              softphoneError={softphone.statusError}
+            />
+
+            {/* An always-available escape hatch. The Hang Up control inside
+                RingingState only exists once callState reaches "ringing"; if a
+                dial stalls before that, this is what gets the agent out. */}
+            {(softphone.callPhase !== "idle" || dialing) && callState !== "connected" && (
+              <button onClick={handleEndCall} className="btn-danger w-full">
+                <PhoneOff size={15} /> Hang Up / Cancel Call
+              </button>
             )}
 
             {callState === "connected" && (
@@ -669,6 +728,8 @@ export default function AgentDashboard() {
                 onOpenAvailability={() => setAvailabilityOpen(true)}
                 outboundNumber={phoneNumbers.find((d) => d.id === activeDIDId)?.number}
                 hotkeys={hotkeys}
+                dtmfInput={dtmfInput}
+                onDtmfInputChange={handleDtmfInputChange}
               />
             )}
 
@@ -698,14 +759,7 @@ export default function AgentDashboard() {
           </div>
         </div>
 
-        <BottomBar
-          campaignName={campaign?.name}
-          status={status}
-          statusSince={statusSince}
-          softphoneStatus={softphone.status}
-          softphoneError={softphone.statusError}
-          onRetrySoftphone={softphone.retry}
-        />
+        <BottomBar campaignName={campaign?.name} status={status} statusSince={statusSince} />
       </div>
 
       <CallbackPopup callback={activeDuePopup} onDialNow={handleDialNowPopup} onDismiss={handleDismissPopup} />
@@ -750,11 +804,12 @@ function WaitingState({
   onManualDialNumberChange,
   onDial,
   dialing,
+  registered,
 }) {
   if (status === "manual_dial") {
     return (
       <div className="space-y-5">
-        <ManualDialCard value={manualDialNumber} onChange={onManualDialNumberChange} onDial={onDial} dialing={dialing} />
+        <ManualDialCard value={manualDialNumber} onChange={onManualDialNumberChange} onDial={onDial} dialing={dialing} registered={registered} />
         <div className="card flex flex-col items-center gap-3 py-6">
           <StatusSelector
             status={status}
@@ -786,6 +841,74 @@ function WaitingState({
         setStatusMenuOpen={setStatusMenuOpen}
         onStatusChange={onStatusChange}
       />
+    </div>
+  );
+}
+
+// Temporary diagnostics for the outbound call/audio pipeline.
+//
+// Everything here is read from the live RTCPeerConnection and the SIP
+// session (see useSoftphone's stats poller), never inferred from UI state.
+// The packet counters are the important part: ICE can reach "connected"
+// and the call can be "connected" while one direction still carries zero
+// RTP, which is the difference between "no call" and "call with no audio"
+// and is invisible from a status badge.
+function CallDiagnostics({ diagnostics, softphoneStatus, softphoneError }) {
+  const d = diagnostics || {};
+  const bad = (v) => typeof v === "string" && /^(NO |not |BLOCKED|failed|disconnected)/i.test(v);
+
+  const rows = [
+    ["SOFTPHONE", softphoneStatus],
+    ["CALL STATE", d.callState],
+    ["SIP RESPONSE", d.sipResponse || "-"],
+    ["WEBRTC STATE", d.pcState],
+    ["ICE STATE", d.iceState],
+    ["MIC", d.mic],
+    ["LOCAL AUDIO", d.localAudio],
+    ["REMOTE AUDIO", d.remoteAudio],
+  ];
+
+  return (
+    <div className="card">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">
+        Call Diagnostics (temporary)
+      </h3>
+      <dl className="space-y-1 font-mono text-xs">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex gap-2">
+            <dt className="w-32 shrink-0 text-[var(--color-text-tertiary)]">{label}:</dt>
+            <dd className={`break-all ${bad(value) ? "font-semibold text-[var(--color-danger)]" : "text-[var(--color-text-primary)]"}`}>
+              {value ?? "-"}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {softphoneError && <p className="mt-2 text-xs text-[var(--color-danger)]">{softphoneError}</p>}
+    </div>
+  );
+}
+
+// Covers both the "dialing" and "ringing" phases of an outbound Manual
+// Dial call (SIP.js/SimpleUser doesn't distinguish the two), plus the
+// brief moment before an incoming leg is auto-answered. Same pulsing-dot
+// pattern as WaitingState above — just with a live Hang Up control, since
+// there was previously no way to cancel a call before it connected.
+function RingingState({ dialedNumber, onHangup }) {
+  return (
+    <div className="card flex flex-col items-center justify-center gap-4 py-16">
+      <div className="relative flex h-24 w-24 items-center justify-center">
+        <span className="absolute inset-0 animate-pulse-slow rounded-full bg-[var(--color-info-tint)]" />
+        <span className="relative h-4 w-4 rounded-full bg-[var(--color-info)]" />
+      </div>
+      <div className="text-center">
+        <p className="text-lg font-semibold text-[var(--color-text-primary)]">
+          {dialedNumber ? `Calling ${dialedNumber}…` : "Connecting call…"}
+        </p>
+        <p className="text-sm text-[var(--color-text-tertiary)]">Ringing</p>
+      </div>
+      <button onClick={onHangup} className="btn-danger px-6">
+        <PhoneOff size={16} /> Hang Up
+      </button>
     </div>
   );
 }
@@ -822,7 +945,8 @@ function StatusSelector({ status, statusSince, statusMenuOpen, setStatusMenuOpen
   );
 }
 
-function ManualDialCard({ value, onChange, onDial, dialing }) {
+function ManualDialCard({ value, onChange, onDial, dialing, registered }) {
+  const disabled = dialing || !registered;
   return (
     <div className="card w-full max-w-md mx-auto">
       <div className="mb-3 flex items-center gap-2.5">
@@ -835,17 +959,19 @@ function ManualDialCard({ value, onChange, onDial, dialing }) {
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !dialing && onDial()}
+          onKeyDown={(e) => e.key === "Enter" && !disabled && onDial()}
           placeholder="(555) 555-0100"
           className="input-field flex-1 py-3 text-lg"
           autoFocus
         />
-        <button onClick={onDial} disabled={dialing} className="btn-purple px-6">
+        <button onClick={onDial} disabled={disabled} className="btn-purple px-6">
           <PhoneCall size={16} /> {dialing ? "Calling…" : "Dial"}
         </button>
       </div>
       <p className="mt-3 text-xs text-[var(--color-text-tertiary)]">
-        You are in Manual Dial mode. Automated calls are paused.
+        {registered
+          ? "You are in Manual Dial mode. Automated calls are paused."
+          : "Waiting for the softphone to register before you can dial out."}
       </p>
     </div>
   );
@@ -868,6 +994,8 @@ function ConnectedState({
   onOpenAvailability,
   outboundNumber,
   hotkeys,
+  dtmfInput,
+  onDtmfInputChange,
 }) {
   const ringColor = getStatusVisual("on_call", callSeconds).color;
 
@@ -945,6 +1073,16 @@ function ConnectedState({
           <button onClick={onEndCall} className="btn-danger">
             <PhoneOff size={15} /> End Call
           </button>
+        </div>
+        <div className="mt-2.5">
+          <label className="mb-1 block text-xs font-medium text-[var(--color-text-secondary)]">Send Keypad Tones (DTMF)</label>
+          <input
+            value={dtmfInput}
+            onChange={(e) => onDtmfInputChange(e.target.value)}
+            placeholder="Type digits to send…"
+            inputMode="tel"
+            className="input-field font-mono tracking-widest"
+          />
         </div>
         <div className="mt-2.5 space-y-2">
           {smsEnabled && (
@@ -1118,51 +1256,12 @@ function ScriptPanel({ agentName, lead, script, loaded, expanded = false }) {
   );
 }
 
-const SOFTPHONE_STATUS_LABEL = {
-  idle: "Softphone: Initializing…",
-  connecting: "Softphone: Connecting…",
-  registered: "Softphone: Registered",
-  unregistered: "Softphone: Not Registered",
-  disconnected: "Softphone: Disconnected",
-  failed: "Softphone: Registration Failed",
-};
-
-const SOFTPHONE_STATUS_COLOR = {
-  idle: "#6B7280",
-  connecting: "#D97706",
-  registered: "#059669",
-  unregistered: "#6B7280",
-  disconnected: "#DC2626",
-  failed: "#DC2626",
-};
-
-function SoftphoneStatusPill({ status, error, onRetry }) {
-  const color = SOFTPHONE_STATUS_COLOR[status] ?? "#6B7280";
-  const canRetry = ["failed", "disconnected", "unregistered"].includes(status);
-  return (
-    <span className="flex items-center gap-1.5 text-xs" title={error || undefined}>
-      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-      <span className="font-medium" style={{ color }}>
-        {SOFTPHONE_STATUS_LABEL[status] ?? status}
-      </span>
-      {canRetry && onRetry && (
-        <button onClick={onRetry} className="font-medium text-[var(--color-accent)] hover:underline">
-          Retry
-        </button>
-      )}
-    </span>
-  );
-}
-
-function BottomBar({ campaignName, status, statusSince, softphoneStatus, softphoneError, onRetrySoftphone }) {
+function BottomBar({ campaignName, status, statusSince }) {
   return (
     <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-white px-6 py-3">
-      <div className="flex flex-wrap items-center gap-4">
-        <span className="text-xs text-[var(--color-text-secondary)]">
-          Campaign: <span className="font-medium text-[var(--color-text-primary)]">{campaignName}</span>
-        </span>
-        <SoftphoneStatusPill status={softphoneStatus} error={softphoneError} onRetry={onRetrySoftphone} />
-      </div>
+      <span className="text-xs text-[var(--color-text-secondary)]">
+        Campaign: <span className="font-medium text-[var(--color-text-primary)]">{campaignName}</span>
+      </span>
       <StatusPill status={status} since={statusSince} size="sm" />
     </div>
   );

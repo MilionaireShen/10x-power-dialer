@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import { useLogoutBanner } from "../lib/useLogoutBanner";
-import AuthShell, { AuthField, AuthDivider } from "../components/AuthShell";
+import AuthShell, { AuthField, AuthDivider, PasswordInput } from "../components/AuthShell";
 import LogoutBanner from "../components/LogoutBanner";
 
 export default function AgentLogin() {
@@ -101,15 +101,12 @@ export default function AgentLogin() {
           />
         </AuthField>
         <AuthField label="Password">
-          <input
-            type="password"
+          <PasswordInput
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);
               resetCampaignStep();
             }}
-            placeholder="••••••••"
-            className="input-field"
             autoComplete="current-password"
           />
         </AuthField>
