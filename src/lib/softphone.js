@@ -26,6 +26,25 @@ function logDiagError(...args) {
   console.error("[softphone]", ...args);
 }
 
+// Condenses an SDP body to the few lines that decide whether the browser
+// can accept it. When a call dies the instant it is answered, the cause is
+// almost always that the answer's media profile doesn't match what the
+// browser offered — Chrome then rejects setRemoteDescription and SIP.js
+// terminates the session. The transport profile on the m= line and the
+// presence of a=fingerprint (DTLS-SRTP, which browsers require) versus
+// a=crypto (SDES, which Chrome does not support) is what distinguishes them.
+function summarizeSdp(sdp) {
+  if (!sdp || typeof sdp !== "string") return "(no SDP body)";
+  const audio = sdp.split(/\r?\n/).find((l) => l.startsWith("m=audio")) || "(no m=audio line)";
+  const codecs = [...sdp.matchAll(/a=rtpmap:\d+\s+([A-Za-z0-9\-_/]+)/g)].map((m) => m[1].split("/")[0]);
+  return [
+    audio.trim(),
+    `fingerprint(DTLS)=${/a=fingerprint/.test(sdp) ? "yes" : "NO"}`,
+    `crypto(SDES)=${/a=crypto/.test(sdp) ? "yes" : "no"}`,
+    `codecs=${[...new Set(codecs)].join(",") || "none"}`,
+  ].join("  ");
+}
+
 // Human-readable meaning for the SIP response codes an outbound INVITE
 // realistically comes back with, so a failure reads as a cause rather than
 // a bare number.
@@ -248,6 +267,17 @@ export function useSoftphone({ enabled }) {
             // logs (Initial/Establishing/Established/Terminated, etc.) in
             // the console alongside the delegate-level logs below.
             logLevel: import.meta.env.DEV ? "debug" : "error",
+            // SIP.js reports the reason it tears a session down through its
+            // own logger — e.g. Inviter.onAccept logs the setAnswer failure
+            // immediately before sending ACK+BYE(488). Routing errors into
+            // the on-screen trail means that reason is visible in production
+            // instead of only in a console nobody has open at the time.
+            logConnector: (level, category, label, content) => {
+              if (level === "error" || level === "warn") {
+                noteDiag(`${category.replace(/^sip\./, "")}: ${String(content).slice(0, 300)}`);
+              }
+              void label;
+            },
           },
           delegate: {
             onServerConnect: () => {
@@ -360,6 +390,11 @@ export function useSoftphone({ enabled }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
+  // Guards against a stale-closure hazard rather than changing behavior:
+  // `connect` closes over noteDiag, which is stable, so this only documents
+  // the dependency for future edits.
+  void noteDiag;
+
   // Polls the live RTCPeerConnection while a call is up. Packet counters are
   // what actually separate "connected but silent" from "no media at all":
   // a call can reach Established with ICE connected and still carry zero RTP
@@ -371,11 +406,20 @@ export function useSoftphone({ enabled }) {
     let lastIce = null;
     let lastPc = null;
     let firstRtpNoted = false;
+    let offerNoted = false;
 
     const read = async () => {
       const user = userRef.current;
       const pc = user?.session?.sessionDescriptionHandler?.peerConnection;
       if (!pc) return;
+
+      // Logged once so the offer can be compared against the answer above —
+      // a mismatch between the two is what makes the browser reject it.
+      if (!offerNoted && pc.localDescription?.sdp) {
+        offerNoted = true;
+        noteDiag(`offer SDP: ${summarizeSdp(pc.localDescription.sdp)}`);
+        noteDiag(`signaling=${pc.signalingState} iceGathering=${pc.iceGatheringState}`);
+      }
 
       const patch = {
         iceState: pc.iceConnectionState || "-",
@@ -496,8 +540,16 @@ export function useSoftphone({ enabled }) {
                 // carrier); generating our own on top would double it.
                 if (code === 180) startRingback();
               },
+              // NOTE ON ORDERING: SIP.js calls this delegate only after its
+              // own Inviter.onAccept() has finished (inviter.js ~line 572),
+              // and that is where the answer SDP is applied. So if the
+              // answer cannot be applied, the ACK+BYE(488) is already sent
+              // by the time this runs — which is why "call ended" can appear
+              // in the trail a few milliseconds BEFORE "200 answered". The
+              // ordering is a logging artifact, not a race in this code.
               onAccept: (response) => {
                 noteDiag(`SIP ${response?.message?.statusCode} answered`);
+                noteDiag(`answer SDP: ${summarizeSdp(response?.message?.body)}`);
                 stopRingback();
               },
               // A rejected INVITE previously surfaced only as a generic
