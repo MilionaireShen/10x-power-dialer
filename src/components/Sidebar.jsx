@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { hasAnyPermission } from "../lib/permissions";
+import { audioStatusFor } from "../lib/audioPrompt";
 import Avatar from "./Avatar";
 
 const NAV_BY_ROLE = {
@@ -84,9 +85,13 @@ const SOFTPHONE_BADGE = {
 
 // Persistent registration status for the WebRTC softphone — always visible
 // in the agent header regardless of which call state the dashboard is in.
-function SoftphoneBadge({ status, error, micBlocked, onRetry }) {
+function SoftphoneBadge({ status, error, micBlocked, onRetry, audioPromptState, onTestAudio }) {
   const meta = SOFTPHONE_BADGE[status] ?? SOFTPHONE_BADGE.idle;
   const canRetry = ["failed", "disconnected", "unregistered"].includes(status) && onRetry;
+  // Reports the audio path, which is a different claim from SIP registration
+  // above: a registered softphone with a blocked mic still cannot carry a
+  // conversation, so that is shown as not connected rather than green.
+  const audio = audioStatusFor(status, micBlocked);
   return (
     <div className="rounded-lg px-3 py-2" style={{ backgroundColor: `color-mix(in srgb, ${meta.color} 10%, white)` }}>
       <div className="flex items-center gap-2">
@@ -95,6 +100,35 @@ function SoftphoneBadge({ status, error, micBlocked, onRetry }) {
           {meta.label}
         </span>
       </div>
+
+      <div className="mt-1.5 flex items-center gap-2">
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: audio.color }} />
+        <span className="text-[11px] font-medium" style={{ color: audio.color }}>
+          {audio.label}
+        </span>
+      </div>
+
+      {/* Autoplay was refused, so nothing has actually been heard yet. A
+          click is real user activation, which is what lets it through. */}
+      {audioPromptState === "blocked" && onTestAudio && (
+        <button
+          onClick={onTestAudio}
+          className="mt-1.5 w-full rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-[11px] font-semibold text-white"
+        >
+          Enable Audio — click to hear the test prompt
+        </button>
+      )}
+
+      {onTestAudio && audioPromptState !== "blocked" && (
+        <button
+          onClick={onTestAudio}
+          className="mt-1.5 text-[11px] font-medium text-[var(--color-accent)] hover:underline"
+          title="Plays the audio-connectivity prompt through your call audio device"
+        >
+          🔊 Test Audio
+        </button>
+      )}
+
       {error && <p className="mt-1 text-[11px] leading-snug text-[var(--color-text-tertiary)]">{error}</p>}
       {/* Registration can succeed while the mic is still blocked — without
           a mic no SDP offer can be built, so no call can ever be placed. */}
@@ -126,6 +160,8 @@ export default function Sidebar({
   softphoneError,
   micBlocked,
   onRetrySoftphone,
+  audioPromptState,
+  onTestAudio,
 }) {
   const { user, logout } = useAuth();
 
@@ -170,7 +206,14 @@ export default function Sidebar({
 
       {user.role === "agent" && softphoneStatus && (
         <div className="border-b border-[var(--color-border)] px-3 py-3">
-          <SoftphoneBadge status={softphoneStatus} error={softphoneError} micBlocked={micBlocked} onRetry={onRetrySoftphone} />
+          <SoftphoneBadge
+            status={softphoneStatus}
+            error={softphoneError}
+            micBlocked={micBlocked}
+            onRetry={onRetrySoftphone}
+            audioPromptState={audioPromptState}
+            onTestAudio={onTestAudio}
+          />
         </div>
       )}
 

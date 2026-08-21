@@ -8,6 +8,7 @@ import DidAlertBanner from "./DidAlertBanner";
 import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
 import { useSoftphone } from "../lib/softphone";
+import { useAudioPrompt, LOGIN_PROMPT_SRC } from "../lib/audioPrompt";
 import monitorService from "../services/monitorService";
 
 // Auth + role enforcement happens per-route via RequireRole. This shell just
@@ -43,11 +44,26 @@ function AgentShell() {
   // particular route.
   const softphone = useSoftphone({ enabled: true });
 
+  // Audio-connectivity prompt. Tied to the softphone actually being
+  // registered with a usable mic — not merely to being logged in — because
+  // its whole purpose is to prove the audio path works before the agent
+  // takes a real call. sessionId changes per login, which is what allows it
+  // to play again after a logout without replaying on every re-render.
+  const { sessionId } = useAuth();
+  const { promptRef, promptState, testAudio } = useAudioPrompt({
+    ready: softphone.status === "registered" && !softphone.micBlocked,
+    sessionKey: sessionId,
+    callAudioRef: softphone.remoteAudioRef,
+  });
+
   return (
     <div className="flex min-h-screen bg-[var(--color-bg)]">
       {/* Remote call audio only — local mic capture is handled internally
           by SIP.js via getUserMedia, nothing to render for it. */}
       <audio ref={softphone.remoteAudioRef} autoPlay style={{ display: "none" }} />
+      {/* Separate from the call element above: that one's srcObject belongs
+          to SIP.js, so giving it a src would disturb live call media. */}
+      <audio ref={promptRef} src={LOGIN_PROMPT_SRC} preload="auto" style={{ display: "none" }} />
 
       <Sidebar
         open={sidebarOpen}
@@ -59,6 +75,8 @@ function AgentShell() {
         softphoneError={softphone.statusError}
         micBlocked={softphone.micBlocked}
         onRetrySoftphone={softphone.retry}
+        audioPromptState={promptState}
+        onTestAudio={testAudio}
       />
       <main className="min-w-0 flex-1">
         <Outlet context={{ sidebarOpen, openPanel, closePanel: () => setOpenPanel(null), softphone }} />

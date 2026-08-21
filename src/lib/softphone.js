@@ -85,6 +85,64 @@ function normalizeSipCredentials(data) {
   };
 }
 
+// --- RTCP multiplexing -----------------------------------------------
+// Telnyx's PSTN gateway answers a WebRTC offer WITHOUT `a=rtcp-mux`, but
+// SIP.js's defaultPeerConnectionConfiguration() hardcodes
+// `rtcpMuxPolicy: "require"`. Chrome then rejects the 200 OK answer with
+//   InvalidAccessError: Failed to set remote answer sdp: The m= section
+//   with mid='0' is invalid. RTCP-MUX is not enabled when it is required.
+// and SIP.js immediately ACK+BYEs the call it just answered — the call
+// connects, then drops, with no audio ever flowing. Both the ringing and
+// answered states flash past, which is why no call panel ever stuck.
+//
+// rtcpMuxPolicy:"negotiate" looks like the obvious fix but does NOT work
+// here. Measured directly in Chrome 148 against an answer with the mux
+// line stripped:
+//   negotiate + no rtcp-mux + BUNDLE  -> InvalidAccessError
+//                                        "rtcp-mux must be enabled when
+//                                         BUNDLE is enabled"
+//   negotiate + no rtcp-mux, no BUNDLE -> accepted
+//   require   + rtcp-mux present       -> accepted
+// Chrome mandates muxing whenever BUNDLE is in play irrespective of the
+// policy, and the answer comes from Telnyx so we do not get to decide
+// whether it carries BUNDLE. That leaves rewriting the answer as the only
+// reliable fix, which is what the modifier below does.
+//
+// Declaring mux when the far end is not muxing costs us RTCP reporting
+// (Chrome sends/expects RTCP on the RTP port; the gateway uses port+1).
+// RTP — the actual voice — flows either way, so this trades a statistics
+// channel for a call that connects at all.
+export function forceRtcpMux(description) {
+  const sdp = description.sdp || "";
+  if (!sdp) return Promise.resolve(description);
+  // Real SDP is CRLF-terminated. Splitting naively leaves a trailing empty
+  // element, and appending the mux line after it puts an attribute past the
+  // session terminator — Chrome then rejects the whole thing with
+  // "Failed to parse SessionDescription". Strip the terminator, rebuild,
+  // then put it back exactly as it was.
+  const trailing = /\r?\n$/.exec(sdp)?.[0] ?? "";
+  const lines = sdp.slice(0, sdp.length - trailing.length).split(/\r?\n/);
+  const out = [];
+  let inMedia = false;
+  let sectionHasMux = false;
+  const closeSection = () => {
+    if (inMedia && !sectionHasMux) out.push("a=rtcp-mux");
+  };
+  for (const line of lines) {
+    if (/^m=/.test(line)) {
+      closeSection();
+      inMedia = true;
+      sectionHasMux = false;
+    } else if (inMedia && /^a=rtcp-mux/.test(line)) {
+      sectionHasMux = true;
+    }
+    out.push(line);
+  }
+  closeSection();
+  description.sdp = out.join("\r\n") + trailing;
+  return Promise.resolve(description);
+}
+
 // Turns whatever the agent typed into Manual Dial into a SIP destination
 // URI against this account's own SIP domain. Best-effort E.164 shaping —
 // good enough for US 10-digit input, not a full phone-number library.
@@ -185,7 +243,9 @@ export function useSoftphone({ enabled }) {
   const diagLogRef = useRef([]);
   const noteDiag = useCallback((label) => {
     const entry = { t: new Date().toISOString().slice(11, 23), label };
-    diagLogRef.current = [...diagLogRef.current.slice(-40), entry];
+    // Raised from 40: SIP.js lifecycle lines are now captured too, and the
+    // failure line must not be pushed out of the window before it can be read.
+    diagLogRef.current = [...diagLogRef.current.slice(-120), entry];
     setDiagLog(diagLogRef.current);
     logDiag(`[${entry.t}] ${label}`);
   }, []);
@@ -272,9 +332,21 @@ export function useSoftphone({ enabled }) {
             // immediately before sending ACK+BYE(488). Routing errors into
             // the on-screen trail means that reason is visible in production
             // instead of only in a console nobody has open at the time.
+            //
+            // The filter is content-based, not level-based. LoggerFactory
+            // calls the connector OUTSIDE its level check
+            // (core/log/logger-factory.js:68) so every level arrives here,
+            // but the single most important line —
+            // "SessionDescriptionHandler.setDescription failed - <error>"
+            // (session-description-handler.js:312) — is the only place the
+            // real reason for the teardown appears, and a level-only filter
+            // was dropping the surrounding context needed to interpret it.
             logConnector: (level, category, label, content) => {
-              if (level === "error" || level === "warn") {
-                noteDiag(`${category.replace(/^sip\./, "")}: ${String(content).slice(0, 300)}`);
+              const text = String(content);
+              const isFailure = /fail|error|reject|invalid|unable|terminat/i.test(text);
+              const isLifecycle = /Inviter|SessionDescriptionHandler|setDescription|Transport/i.test(category + text);
+              if (level === "error" || level === "warn" || isFailure || isLifecycle) {
+                noteDiag(`${level}|${category.replace(/^sip\./, "")}: ${text.slice(0, 400)}`);
               }
               void label;
             },
@@ -309,11 +381,18 @@ export function useSoftphone({ enabled }) {
             onCallReceived: () => {
               logDiag("event: onCallReceived — auto-answering");
               setCallPhase("ringing");
-              user.answer({ sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } }).catch((err) => {
-                logDiagError("event: onCallReceived — answer() failed:", err);
-                setStatusError("Could not answer the incoming call.");
-                setCallPhase("idle");
-              });
+              user
+                .answer({
+                  sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+                  // Same rtcp-mux guard as the outbound path — an inbound
+                  // offer that omits it would otherwise be rejected too.
+                  sessionDescriptionHandlerModifiers: [forceRtcpMux],
+                })
+                .catch((err) => {
+                  logDiagError("event: onCallReceived — answer() failed:", err);
+                  setStatusError("Could not answer the incoming call.");
+                  setCallPhase("idle");
+                });
             },
             onCallAnswered: () => {
               noteDiag("call answered (200 OK)");
@@ -526,7 +605,11 @@ export function useSoftphone({ enabled }) {
       return user
         .call(
           target,
-          undefined,
+          // inviterOptions — Inviter stores these modifiers and applies them
+          // to the 200 OK answer SDP (inviter.js:895) right before
+          // setRemoteDescription, which is exactly where the rtcp-mux
+          // rejection happens. See the RTCP block at the top of this file.
+          { sessionDescriptionHandlerModifiers: [forceRtcpMux] },
           {
             requestDelegate: {
               // 180 Ringing / 183 Session Progress — the destination is

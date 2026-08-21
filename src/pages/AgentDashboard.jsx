@@ -894,7 +894,7 @@ function CallDiagnostics({ diagnostics, diagLog, softphoneStatus, softphoneError
           <h4 className="mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">
             Transitions (most recent last)
           </h4>
-          <ol className="max-h-48 overflow-y-auto rounded bg-[var(--color-bg)] p-2 font-mono text-[11px] leading-5">
+          <ol className="max-h-96 overflow-y-auto rounded bg-[var(--color-bg)] p-2 font-mono text-[11px] leading-5">
             {diagLog.map((e, i) => (
               <li key={`${e.t}-${i}`} className="flex gap-2">
                 <span className="shrink-0 text-[var(--color-text-tertiary)]">{e.t}</span>
