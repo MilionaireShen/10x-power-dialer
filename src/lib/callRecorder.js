@@ -169,7 +169,30 @@ export function createChunkUploader({ sessionId, uploadFn, onStateChange }) {
 
   // Walks whatever is queued. Called after every new chunk and whenever the
   // browser reports connectivity returning, so a backlog clears on its own.
+  //
+  // A concurrent caller gets the IN-PROGRESS promise rather than an immediate
+  // return. Returning early was a real defect: finalize awaited drain() while
+  // an enqueue-triggered drain was still uploading, got back a resolved
+  // promise, and finalized against a chunk table that had not been written
+  // yet — which is how a perfectly good short call ended up recorded as
+  // having no chunks at all.
+  let currentDrain = null;
   async function drain() {
+    if (currentDrain) return currentDrain;
+    currentDrain = (async () => {
+      try {
+        await drainOnce();
+        // Anything enqueued while the first pass was running still needs a
+        // pass of its own.
+        await drainOnce();
+      } finally {
+        currentDrain = null;
+      }
+    })();
+    return currentDrain;
+  }
+
+  async function drainOnce() {
     if (draining) return;
     draining = true;
     try {
