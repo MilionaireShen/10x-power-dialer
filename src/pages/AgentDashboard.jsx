@@ -22,6 +22,7 @@ import campaignService from "../services/campaignService";
 import hotkeyService from "../services/hotkeyService";
 import scriptService from "../services/scriptService";
 import agentService from "../services/agentService";
+import callService from "../services/callService";
 import reportService from "../services/reportService";
 import { playDtmfTone, addedDtmfDigits } from "../lib/dtmf";
 
@@ -109,7 +110,7 @@ export default function AgentDashboard() {
   // The softphone (SIP.js, registered against Telnyx) is instantiated once
   // in AppLayout's AgentShell — not here — so registration survives across
   // whichever agent page/panel is mounted; callState below just mirrors it.
-  const { sidebarOpen, openPanel, closePanel, softphone } = useOutletContext();
+  const { sidebarOpen, openPanel, closePanel, softphone, recording } = useOutletContext();
 
   // Real campaign record (name, wrap-up limit, SMS config, assigned
   // script) rather than the AppDataContext mock list — falls back to the
@@ -508,6 +509,21 @@ export default function AgentDashboard() {
     setDialedNumber(trimmed);
     setManualDialNumber("");
     setDialing(true);
+
+    // Declares the call to the backend before the INVITE goes out, so it lands
+    // with an agent and campaign on it. The Telnyx webhook, which is otherwise
+    // the only record of a browser-originated call, carries nothing that
+    // identifies the agent — it claims this row instead of creating an
+    // unattributed one. Best-effort: a failure here must not block the call.
+    callService
+      .manual(trimmed)
+      .then((res) => {
+        const callId = res?.data?.id;
+        if (callId) recording?.setCallContext?.({ callId, toNumber: trimmed, direction: "outbound" });
+      })
+      .catch((err) => {
+        console.warn("[dialer] could not declare manual call:", err?.message || err);
+      });
     // The screen doesn't flip to "connected" here — the softphone bridge
     // effect above does that once onCallAnswered actually fires (moving
     // through "ringing" first), so this waits for the real call the same

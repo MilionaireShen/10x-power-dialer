@@ -19,10 +19,19 @@ function log(...args) {
  * @param softphone - the useSoftphone() return value.
  * @param callContext - metadata to file the recording under.
  */
-export function useCallRecording({ softphone, callContext, enabled = true }) {
+export function useCallRecording({ softphone, enabled = true }) {
   const [status, setStatus] = useState("idle"); // idle | recording | uploading | completed | incomplete | failed
   const [stats, setStats] = useState({ uploaded: 0, pending: 0, failed: 0 });
   const [error, setError] = useState(null);
+
+  // Set by the dialer the moment it declares a manual call, so the recording
+  // files against the same attributed row rather than floating unlinked. Held
+  // in a ref because it must be readable by the start effect without making
+  // the effect re-run and restart a recording mid-call.
+  const callContextRef = useRef(null);
+  const setCallContext = useCallback((ctx) => {
+    callContextRef.current = ctx;
+  }, []);
 
   const recorderRef = useRef(null);
   const uploaderRef = useRef(null);
@@ -80,13 +89,14 @@ export function useCallRecording({ softphone, callContext, enabled = true }) {
     }
 
     setError(null);
+    const ctx = callContextRef.current || {};
     try {
       const created = await recordingService.startSession({
-        call_id: callContext?.callId ?? null,
-        campaign_id: callContext?.campaignId ?? null,
-        from_number: callContext?.fromNumber ?? null,
-        to_number: callContext?.toNumber ?? null,
-        direction: callContext?.direction ?? "outbound",
+        call_id: ctx.callId ?? null,
+        campaign_id: ctx.campaignId ?? null,
+        from_number: ctx.fromNumber ?? null,
+        to_number: ctx.toNumber ?? null,
+        direction: ctx.direction ?? "outbound",
         format: "audio/webm;codecs=opus",
       });
       const sessionId = created?.data?.id;
@@ -120,7 +130,7 @@ export function useCallRecording({ softphone, callContext, enabled = true }) {
       log("start failed:", err);
     }
     void user;
-  }, [softphone, callContext]);
+  }, [softphone]);
 
   // Starts when the call is genuinely connected — before that the remote
   // stream carries no track and there would be nothing of the customer to
@@ -130,13 +140,14 @@ export function useCallRecording({ softphone, callContext, enabled = true }) {
     const connected = softphone?.callPhase === "connected";
 
     if (connected && !activeCallRef.current) {
-      activeCallRef.current = callContext?.callId || `call-${Date.now()}`;
+      activeCallRef.current = callContextRef.current?.callId || `call-${Date.now()}`;
       startRecording();
     }
     if (!connected && activeCallRef.current) {
       stopAndFinalize();
+      callContextRef.current = null;
     }
-  }, [enabled, softphone?.callPhase, callContext, startRecording, stopAndFinalize]);
+  }, [enabled, softphone?.callPhase, startRecording, stopAndFinalize]);
 
   // A refresh or tab close tears down the WebRTC session regardless, so the
   // most that can be done is flush what is already queued. Chunks uploaded up
@@ -157,5 +168,5 @@ export function useCallRecording({ softphone, callContext, enabled = true }) {
     return () => window.removeEventListener("online", onOnline);
   }, []);
 
-  return { status, stats, error };
+  return { status, stats, error, setCallContext };
 }

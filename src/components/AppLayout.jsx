@@ -60,10 +60,7 @@ function AgentShell() {
   // Records both sides of the live call and uploads it in chunks while the
   // call is still running. Observes the softphone only — it never drives it,
   // so a recording failure cannot affect the call.
-  const recording = useCallRecording({
-    softphone,
-    callContext: { direction: "outbound" },
-  });
+  const recording = useCallRecording({ softphone });
 
   return (
     <div className="flex min-h-screen bg-[var(--color-bg)]">
