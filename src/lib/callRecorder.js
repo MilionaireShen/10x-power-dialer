@@ -151,6 +151,12 @@ export function createChunkUploader({ sessionId, uploadFn, onStateChange }) {
   const state = { uploaded: 0, pending: 0, failed: 0 };
   let draining = false;
 
+  // Every in-flight enqueue. MediaRecorder emits its final slice just before
+  // onstop, and writing it to IndexedDB is asynchronous — without something to
+  // await, a finalize triggered on stop can run while that write is still in
+  // progress and miss the tail of the call.
+  const inFlight = new Set();
+
   const report = () => onStateChange?.({ ...state });
 
   async function attempt(entry) {
@@ -194,11 +200,21 @@ export function createChunkUploader({ sessionId, uploadFn, onStateChange }) {
   }
 
   return {
-    async enqueue({ chunkNumber, blob }) {
-      await queuePut({ key: `${sessionId}:${chunkNumber}`, sessionId, chunkNumber, blob, queuedAt: Date.now() });
-      state.pending += 1;
-      report();
-      drain();
+    enqueue({ chunkNumber, blob }) {
+      const task = (async () => {
+        await queuePut({ key: `${sessionId}:${chunkNumber}`, sessionId, chunkNumber, blob, queuedAt: Date.now() });
+        state.pending += 1;
+        report();
+        drain();
+      })();
+      inFlight.add(task);
+      task.finally(() => inFlight.delete(task));
+      return task;
+    },
+    // Resolves once every enqueue started so far has been written. Awaited
+    // before finalize so the tail chunk is counted.
+    settled() {
+      return Promise.allSettled([...inFlight]);
     },
     drain,
     get stats() {

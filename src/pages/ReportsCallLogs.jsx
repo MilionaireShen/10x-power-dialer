@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Play, Phone } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import ExportActions from "../components/ExportActions";
@@ -7,6 +8,7 @@ import { useAppData } from "../lib/AppDataContext";
 import { useToast } from "../lib/ToastContext";
 
 export default function ReportsCallLogs() {
+  const navigate = useNavigate();
   const { notify } = useToast();
   const { manualDialLog } = useAppData();
   const [agentFilter, setAgentFilter] = useState("All Agents");
@@ -101,8 +103,14 @@ export default function ReportsCallLogs() {
                       )}
                     </td>
                     <td className="px-5 py-3.5">
+                      {/* This control used to fire a toast claiming the
+                          recording was playing while nothing was played. Rows
+                          on this page carry no recording id, so rather than
+                          assert something untrue it sends the operator to the
+                          page that does have real audio. */}
                       <button
-                        onClick={() => notify(`Playing recording for call with ${c.lead}.`, "info")}
+                        onClick={() => navigate("/admin/reports/call-recordings")}
+                        title="Open Call Recordings to play this call's audio"
                         className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--color-accent-tint)] hover:text-[var(--color-accent)] transition-colors"
                       >
                         <Play size={13} />

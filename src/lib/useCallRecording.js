@@ -52,9 +52,18 @@ export function useCallRecording({ softphone, enabled = true }) {
     setStatus("uploading");
     try {
       const chunkCount = await recorder.stop();
-      // Give the tail chunk and anything queued a chance to land before the
-      // backend decides whether the recording is complete.
+
+      // stop() resolves on MediaRecorder's onstop, but the final slice arrives
+      // via ondataavailable just before that and is enqueued asynchronously
+      // (IndexedDB). Draining immediately therefore raced the tail chunk: it
+      // was still being written when finalize ran, so the backend counted one
+      // chunk fewer than expected and marked an otherwise fine recording
+      // 'incomplete'. Waiting for every enqueue to settle first removes the race.
+      await uploader?.settled?.();
       await uploader?.drain();
+      // A chunk that failed its in-drain retries is worth one more attempt
+      // here, while the page is still alive.
+      if (uploader?.stats?.failed) await uploader.drain();
 
       const durationSeconds = startedAtRef.current
         ? Math.round((Date.now() - startedAtRef.current) / 1000)
