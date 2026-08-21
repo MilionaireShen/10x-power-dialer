@@ -9,6 +9,7 @@ import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
 import { useSoftphone } from "../lib/softphone";
 import { useAudioPrompt, LOGIN_PROMPT_SRC } from "../lib/audioPrompt";
+import { useCallRecording } from "../lib/useCallRecording";
 import monitorService from "../services/monitorService";
 
 // Auth + role enforcement happens per-route via RequireRole. This shell just
@@ -56,6 +57,14 @@ function AgentShell() {
     callAudioRef: softphone.remoteAudioRef,
   });
 
+  // Records both sides of the live call and uploads it in chunks while the
+  // call is still running. Observes the softphone only — it never drives it,
+  // so a recording failure cannot affect the call.
+  const recording = useCallRecording({
+    softphone,
+    callContext: { direction: "outbound" },
+  });
+
   return (
     <div className="flex min-h-screen bg-[var(--color-bg)]">
       {/* Remote call audio only — local mic capture is handled internally
@@ -79,7 +88,7 @@ function AgentShell() {
         onTestAudio={testAudio}
       />
       <main className="min-w-0 flex-1">
-        <Outlet context={{ sidebarOpen, openPanel, closePanel: () => setOpenPanel(null), softphone }} />
+        <Outlet context={{ sidebarOpen, openPanel, closePanel: () => setOpenPanel(null), softphone, recording }} />
       </main>
     </div>
   );

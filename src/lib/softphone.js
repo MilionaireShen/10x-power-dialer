@@ -585,6 +585,17 @@ export function useSoftphone({ enabled }) {
     callPhase,
     callFailure,
     micBlocked,
+    // Read-only accessors onto the streams the SIP session already owns.
+    // Exposed for call recording, which needs BOTH: the local track carries
+    // only the agent, and the customer exists solely on the remote stream.
+    // Getters rather than state so they always reflect the current session
+    // without adding a re-render path into the call machinery.
+    get localMediaStream() {
+      return userRef.current?.localMediaStream ?? null;
+    },
+    get remoteMediaStream() {
+      return userRef.current?.remoteMediaStream ?? null;
+    },
     callActive: callPhase === "connected",
     muted,
     held,
