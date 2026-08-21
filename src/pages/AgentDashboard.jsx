@@ -697,6 +697,7 @@ export default function AgentDashboard() {
                 outbound audio is confirmed working end to end. */}
             <CallDiagnostics
               diagnostics={softphone.diagnostics}
+              diagLog={softphone.diagLog}
               softphoneStatus={softphone.status}
               softphoneError={softphone.statusError}
             />
@@ -853,7 +854,7 @@ function WaitingState({
 // and the call can be "connected" while one direction still carries zero
 // RTP, which is the difference between "no call" and "call with no audio"
 // and is invisible from a status badge.
-function CallDiagnostics({ diagnostics, softphoneStatus, softphoneError }) {
+function CallDiagnostics({ diagnostics, diagLog, softphoneStatus, softphoneError }) {
   const d = diagnostics || {};
   const bad = (v) => typeof v === "string" && /^(NO |not |BLOCKED|failed|disconnected)/i.test(v);
 
@@ -884,6 +885,25 @@ function CallDiagnostics({ diagnostics, softphoneStatus, softphoneError }) {
         ))}
       </dl>
       {softphoneError && <p className="mt-2 text-xs text-[var(--color-danger)]">{softphoneError}</p>}
+
+      {/* Survives the call, unlike the live values above. A call the far end
+          tears down a second after answering is otherwise impossible to read,
+          because the states worth seeing are gone before you can look. */}
+      {diagLog?.length > 0 && (
+        <>
+          <h4 className="mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">
+            Transitions (most recent last)
+          </h4>
+          <ol className="max-h-48 overflow-y-auto rounded bg-[var(--color-bg)] p-2 font-mono text-[11px] leading-5">
+            {diagLog.map((e, i) => (
+              <li key={`${e.t}-${i}`} className="flex gap-2">
+                <span className="shrink-0 text-[var(--color-text-tertiary)]">{e.t}</span>
+                <span className="break-all text-[var(--color-text-primary)]">{e.label}</span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
     </div>
   );
 }

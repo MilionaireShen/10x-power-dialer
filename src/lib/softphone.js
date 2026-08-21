@@ -55,6 +55,7 @@ function normalizeSipCredentials(data) {
     username: data.sip_username ?? data.username ?? data.sip_user ?? "",
     password: data.sip_password ?? data.password ?? data.sip_pass ?? data.credential ?? "",
     domain: data.sip_domain ?? data.domain ?? data.realm ?? DEFAULT_DOMAIN,
+    callerIdNumber: data.caller_id_number ?? data.caller_id ?? "",
     wsServer:
       data.ws_server ??
       data.websocket_server ??
@@ -156,6 +157,20 @@ export function useSoftphone({ enabled }) {
   });
   const patchDiag = useCallback((patch) => setDiagnostics((d) => ({ ...d, ...patch })), []);
 
+  // A call that is answered and torn down within a second leaves nothing to
+  // read off a live panel — the interesting states are gone before they can
+  // be seen. This keeps a timestamped trail of transitions that survives the
+  // call, which is the only way to answer "what did ICE/RTP actually do at
+  // the moment it was answered".
+  const [diagLog, setDiagLog] = useState([]);
+  const diagLogRef = useRef([]);
+  const noteDiag = useCallback((label) => {
+    const entry = { t: new Date().toISOString().slice(11, 23), label };
+    diagLogRef.current = [...diagLogRef.current.slice(-40), entry];
+    setDiagLog(diagLogRef.current);
+    logDiag(`[${entry.t}] ${label}`);
+  }, []);
+
   const userRef = useRef(null);
   const domainRef = useRef(DEFAULT_DOMAIN);
   const remoteAudioRef = useRef(null);
@@ -217,6 +232,18 @@ export function useSoftphone({ enabled }) {
           userAgentOptions: {
             authorizationUsername: creds.username,
             authorizationPassword: creds.password,
+            // Deliberately NOT set to the caller ID number. Doing that put
+            // the number in the SIP From display name, and the terminating
+            // carrier renders the display name as the caller *name* — so the
+            // called party saw the number twice, once as the number and once
+            // beneath it as the name.
+            //
+            // Sending no display name at all leaves the name field empty, so
+            // the receiving carrier performs its own CNAM/LRN lookup, which
+            // is what produces a city/state line where the carrier supports
+            // it. A real caller name belongs in the number's CNAM listing at
+            // Telnyx, not in a header set by the browser.
+            displayName: undefined,
             // Surfaces SIP.js's own internal per-session state-transition
             // logs (Initial/Establishing/Established/Terminated, etc.) in
             // the console alongside the delegate-level logs below.
@@ -259,7 +286,7 @@ export function useSoftphone({ enabled }) {
               });
             },
             onCallAnswered: () => {
-              logDiag("event: onCallAnswered");
+              noteDiag("call answered (200 OK)");
               stopRingback();
               setCallPhase("connected");
               setMuted(false);
@@ -285,7 +312,7 @@ export function useSoftphone({ enabled }) {
               verifyRemoteAudioElement(remoteAudioRef.current, "onCallAnswered");
             },
             onCallHangup: () => {
-              logDiag("event: onCallHangup");
+              noteDiag("call ended (BYE)");
               stopRingback();
               setCallPhase("idle");
               setMuted(false);
@@ -341,6 +368,10 @@ export function useSoftphone({ enabled }) {
     if (callPhase === "idle") return undefined;
 
     let cancelled = false;
+    let lastIce = null;
+    let lastPc = null;
+    let firstRtpNoted = false;
+
     const read = async () => {
       const user = userRef.current;
       const pc = user?.session?.sessionDescriptionHandler?.peerConnection;
@@ -350,6 +381,17 @@ export function useSoftphone({ enabled }) {
         iceState: pc.iceConnectionState || "-",
         pcState: pc.connectionState || "-",
       };
+      // Transitions are recorded rather than only displayed, so a state the
+      // call passed through for a fraction of a second is still readable
+      // afterwards.
+      if (patch.iceState !== lastIce) {
+        noteDiag(`ICE -> ${patch.iceState}`);
+        lastIce = patch.iceState;
+      }
+      if (patch.pcState !== lastPc) {
+        noteDiag(`WebRTC -> ${patch.pcState}`);
+        lastPc = patch.pcState;
+      }
 
       const senderTrack = pc.getSenders?.().find((s) => s.track?.kind === "audio")?.track;
       const receiverTrack = pc.getReceivers?.().find((r) => r.track?.kind === "audio")?.track;
@@ -365,6 +407,10 @@ export function useSoftphone({ enabled }) {
         });
         patch.packetsSent = sent;
         patch.packetsReceived = received;
+        if (!firstRtpNoted && (sent > 0 || received > 0)) {
+          noteDiag(`first RTP — sent=${sent} received=${received}`);
+          firstRtpNoted = true;
+        }
         patch.localAudio = sent > 0 ? `sending (${sent} pkts)` : senderTrack ? "track present, 0 packets" : "not sending";
         patch.remoteAudio = received > 0
           ? `receiving (${received} pkts)`
@@ -378,12 +424,15 @@ export function useSoftphone({ enabled }) {
     };
 
     read();
-    const id = setInterval(read, 1000);
+    // 250ms, not 1s: an answered call that the far end tears down within a
+    // second would otherwise be sampled once or not at all, and the answered
+    // state is exactly the one worth capturing.
+    const id = setInterval(read, 250);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [callPhase, patchDiag]);
+  }, [callPhase, patchDiag, noteDiag]);
 
   // Must be called synchronously from within the click handler that starts
   // a call — Chrome/Safari require real user activation before an <audio>
@@ -441,14 +490,14 @@ export function useSoftphone({ enabled }) {
               // local ringback tone is honest.
               onProgress: (response) => {
                 const code = response?.message?.statusCode;
-                logDiag("INVITE progress:", code, response?.message?.reasonPhrase);
+                noteDiag(`SIP ${code} ${response?.message?.reasonPhrase || ""}`.trim());
                 patchDiag({ callState: "ringing", sipResponse: sipReasonFor(code, response?.message?.reasonPhrase) });
                 // 183 usually carries early media (real ringback from the
                 // carrier); generating our own on top would double it.
                 if (code === 180) startRingback();
               },
               onAccept: (response) => {
-                logDiag("INVITE accepted:", response?.message?.statusCode);
+                noteDiag(`SIP ${response?.message?.statusCode} answered`);
                 stopRingback();
               },
               // A rejected INVITE previously surfaced only as a generic
@@ -458,6 +507,7 @@ export function useSoftphone({ enabled }) {
                 const code = response?.message?.statusCode;
                 const phrase = response?.message?.reasonPhrase;
                 const reason = sipReasonFor(code, phrase);
+                noteDiag(`REJECTED ${reason}`);
                 logDiagError("INVITE rejected:", reason);
                 stopRingback();
                 patchDiag({ callState: "ended", sipResponse: reason });
@@ -484,7 +534,7 @@ export function useSoftphone({ enabled }) {
           throw Object.assign(new Error(message), { name: err?.name });
         });
     },
-    [status, unlockAudio, patchDiag]
+    [status, unlockAudio, patchDiag, noteDiag]
   );
 
   const hangup = useCallback(() => {
@@ -529,6 +579,7 @@ export function useSoftphone({ enabled }) {
     callFailure,
     micBlocked,
     diagnostics,
+    diagLog,
     callActive: callPhase === "connected",
     muted,
     held,
