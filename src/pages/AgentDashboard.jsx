@@ -690,18 +690,6 @@ export default function AgentDashboard() {
 
             {callState === "ringing" && <RingingState dialedNumber={dialedNumber} onHangup={handleEndCall} />}
 
-            {/* Temporary call-pipeline diagnostics. Values come from the live
-                RTCPeerConnection and the SIP session, not from this screen's
-                own state, so they show what the browser and carrier are
-                really doing rather than what the UI believes. Remove once
-                outbound audio is confirmed working end to end. */}
-            <CallDiagnostics
-              diagnostics={softphone.diagnostics}
-              diagLog={softphone.diagLog}
-              softphoneStatus={softphone.status}
-              softphoneError={softphone.statusError}
-            />
-
             {/* An always-available escape hatch. The Hang Up control inside
                 RingingState only exists once callState reaches "ringing"; if a
                 dial stalls before that, this is what gets the agent out. */}
@@ -842,68 +830,6 @@ function WaitingState({
         setStatusMenuOpen={setStatusMenuOpen}
         onStatusChange={onStatusChange}
       />
-    </div>
-  );
-}
-
-// Temporary diagnostics for the outbound call/audio pipeline.
-//
-// Everything here is read from the live RTCPeerConnection and the SIP
-// session (see useSoftphone's stats poller), never inferred from UI state.
-// The packet counters are the important part: ICE can reach "connected"
-// and the call can be "connected" while one direction still carries zero
-// RTP, which is the difference between "no call" and "call with no audio"
-// and is invisible from a status badge.
-function CallDiagnostics({ diagnostics, diagLog, softphoneStatus, softphoneError }) {
-  const d = diagnostics || {};
-  const bad = (v) => typeof v === "string" && /^(NO |not |BLOCKED|failed|disconnected)/i.test(v);
-
-  const rows = [
-    ["SOFTPHONE", softphoneStatus],
-    ["CALL STATE", d.callState],
-    ["SIP RESPONSE", d.sipResponse || "-"],
-    ["WEBRTC STATE", d.pcState],
-    ["ICE STATE", d.iceState],
-    ["MIC", d.mic],
-    ["LOCAL AUDIO", d.localAudio],
-    ["REMOTE AUDIO", d.remoteAudio],
-  ];
-
-  return (
-    <div className="card">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">
-        Call Diagnostics (temporary)
-      </h3>
-      <dl className="space-y-1 font-mono text-xs">
-        {rows.map(([label, value]) => (
-          <div key={label} className="flex gap-2">
-            <dt className="w-32 shrink-0 text-[var(--color-text-tertiary)]">{label}:</dt>
-            <dd className={`break-all ${bad(value) ? "font-semibold text-[var(--color-danger)]" : "text-[var(--color-text-primary)]"}`}>
-              {value ?? "-"}
-            </dd>
-          </div>
-        ))}
-      </dl>
-      {softphoneError && <p className="mt-2 text-xs text-[var(--color-danger)]">{softphoneError}</p>}
-
-      {/* Survives the call, unlike the live values above. A call the far end
-          tears down a second after answering is otherwise impossible to read,
-          because the states worth seeing are gone before you can look. */}
-      {diagLog?.length > 0 && (
-        <>
-          <h4 className="mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">
-            Transitions (most recent last)
-          </h4>
-          <ol className="max-h-96 overflow-y-auto rounded bg-[var(--color-bg)] p-2 font-mono text-[11px] leading-5">
-            {diagLog.map((e, i) => (
-              <li key={`${e.t}-${i}`} className="flex gap-2">
-                <span className="shrink-0 text-[var(--color-text-tertiary)]">{e.t}</span>
-                <span className="break-all text-[var(--color-text-primary)]">{e.label}</span>
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
     </div>
   );
 }

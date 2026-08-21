@@ -216,38 +216,13 @@ export function useSoftphone({ enabled }) {
   const [muted, setMuted] = useState(false);
   const [held, setHeld] = useState(false);
 
-  // Everything the on-screen diagnostics panel shows. Sourced from the
-  // RTCPeerConnection and the SIP session itself rather than from this
-  // hook's own UI state, so it reports what the browser and carrier are
-  // really doing — the UI saying "Calling…" proves nothing about whether an
-  // INVITE was accepted or whether media is flowing.
-  const [diagnostics, setDiagnostics] = useState({
-    callState: "idle", // idle | trying | ringing | connected | ended
-    sipResponse: null, // last INVITE response, e.g. "403 Forbidden — ..."
-    iceState: "-",
-    pcState: "-",
-    mic: "-",
-    localAudio: "-",
-    remoteAudio: "-",
-    packetsSent: 0,
-    packetsReceived: 0,
-  });
-  const patchDiag = useCallback((patch) => setDiagnostics((d) => ({ ...d, ...patch })), []);
-
-  // A call that is answered and torn down within a second leaves nothing to
-  // read off a live panel — the interesting states are gone before they can
-  // be seen. This keeps a timestamped trail of transitions that survives the
-  // call, which is the only way to answer "what did ICE/RTP actually do at
-  // the moment it was answered".
-  const [diagLog, setDiagLog] = useState([]);
-  const diagLogRef = useRef([]);
+  // Timestamped console trace of the call lifecycle. This replaced an
+  // on-screen diagnostics panel once outbound audio was confirmed working;
+  // the console is enough now that there is no live failure to watch, and it
+  // costs nothing per call. The panel and its RTCPeerConnection stats poller
+  // are in git history if a future media problem needs them back.
   const noteDiag = useCallback((label) => {
-    const entry = { t: new Date().toISOString().slice(11, 23), label };
-    // Raised from 40: SIP.js lifecycle lines are now captured too, and the
-    // failure line must not be pushed out of the window before it can be read.
-    diagLogRef.current = [...diagLogRef.current.slice(-120), entry];
-    setDiagLog(diagLogRef.current);
-    logDiag(`[${entry.t}] ${label}`);
+    logDiag(`[${new Date().toISOString().slice(11, 23)}] ${label}`);
   }, []);
 
   const userRef = useRef(null);
@@ -411,13 +386,6 @@ export function useSoftphone({ enabled }) {
               if (remoteTracks.length === 0) {
                 logDiagError("no remote audio track — nothing to play back yet");
               }
-              patchDiag({
-                callState: "connected",
-                mic: localTracks.length ? `active (${localTracks.length} track)` : "NO LOCAL TRACK",
-                localAudio: localTracks[0]?.enabled ? "sending" : "track disabled",
-                remoteAudio: remoteTracks.length ? "track received" : "NO REMOTE TRACK",
-              });
-
               verifyRemoteAudioElement(remoteAudioRef.current, "onCallAnswered");
             },
             onCallHangup: () => {
@@ -426,7 +394,6 @@ export function useSoftphone({ enabled }) {
               setCallPhase("idle");
               setMuted(false);
               setHeld(false);
-              patchDiag({ callState: "ended", iceState: "-", pcState: "-", localAudio: "-", remoteAudio: "-" });
             },
             onCallHold: (isHeld) => {
               logDiag("event: onCallHold —", isHeld ? "held" : "unheld");
@@ -469,94 +436,6 @@ export function useSoftphone({ enabled }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
-  // Guards against a stale-closure hazard rather than changing behavior:
-  // `connect` closes over noteDiag, which is stable, so this only documents
-  // the dependency for future edits.
-  void noteDiag;
-
-  // Polls the live RTCPeerConnection while a call is up. Packet counters are
-  // what actually separate "connected but silent" from "no media at all":
-  // a call can reach Established with ICE connected and still carry zero RTP
-  // in one direction, which is exactly the case a status badge cannot show.
-  useEffect(() => {
-    if (callPhase === "idle") return undefined;
-
-    let cancelled = false;
-    let lastIce = null;
-    let lastPc = null;
-    let firstRtpNoted = false;
-    let offerNoted = false;
-
-    const read = async () => {
-      const user = userRef.current;
-      const pc = user?.session?.sessionDescriptionHandler?.peerConnection;
-      if (!pc) return;
-
-      // Logged once so the offer can be compared against the answer above —
-      // a mismatch between the two is what makes the browser reject it.
-      if (!offerNoted && pc.localDescription?.sdp) {
-        offerNoted = true;
-        noteDiag(`offer SDP: ${summarizeSdp(pc.localDescription.sdp)}`);
-        noteDiag(`signaling=${pc.signalingState} iceGathering=${pc.iceGatheringState}`);
-      }
-
-      const patch = {
-        iceState: pc.iceConnectionState || "-",
-        pcState: pc.connectionState || "-",
-      };
-      // Transitions are recorded rather than only displayed, so a state the
-      // call passed through for a fraction of a second is still readable
-      // afterwards.
-      if (patch.iceState !== lastIce) {
-        noteDiag(`ICE -> ${patch.iceState}`);
-        lastIce = patch.iceState;
-      }
-      if (patch.pcState !== lastPc) {
-        noteDiag(`WebRTC -> ${patch.pcState}`);
-        lastPc = patch.pcState;
-      }
-
-      const senderTrack = pc.getSenders?.().find((s) => s.track?.kind === "audio")?.track;
-      const receiverTrack = pc.getReceivers?.().find((r) => r.track?.kind === "audio")?.track;
-      patch.mic = senderTrack ? (senderTrack.enabled && !senderTrack.muted ? "active" : "muted/disabled") : "NO MIC TRACK";
-
-      try {
-        const stats = await pc.getStats();
-        let sent = 0;
-        let received = 0;
-        stats.forEach((r) => {
-          if (r.type === "outbound-rtp" && r.kind === "audio") sent = r.packetsSent ?? sent;
-          if (r.type === "inbound-rtp" && r.kind === "audio") received = r.packetsReceived ?? received;
-        });
-        patch.packetsSent = sent;
-        patch.packetsReceived = received;
-        if (!firstRtpNoted && (sent > 0 || received > 0)) {
-          noteDiag(`first RTP — sent=${sent} received=${received}`);
-          firstRtpNoted = true;
-        }
-        patch.localAudio = sent > 0 ? `sending (${sent} pkts)` : senderTrack ? "track present, 0 packets" : "not sending";
-        patch.remoteAudio = received > 0
-          ? `receiving (${received} pkts)`
-          : receiverTrack ? "track present, 0 packets" : "not receiving";
-      } catch {
-        // getStats can reject once the PC is closing — the ICE/PC states
-        // above are still worth reporting.
-      }
-
-      if (!cancelled) patchDiag(patch);
-    };
-
-    read();
-    // 250ms, not 1s: an answered call that the far end tears down within a
-    // second would otherwise be sampled once or not at all, and the answered
-    // state is exactly the one worth capturing.
-    const id = setInterval(read, 250);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [callPhase, patchDiag, noteDiag]);
-
   // Must be called synchronously from within the click handler that starts
   // a call — Chrome/Safari require real user activation before an <audio>
   // element or AudioContext is allowed to produce sound. Priming both here
@@ -586,7 +465,6 @@ export function useSoftphone({ enabled }) {
         // never reached.
         setCallFailure({ message, name: "NotRegistered" });
         setCallPhase("idle");
-        patchDiag({ callState: "ended", sipResponse: "not sent — softphone not registered" });
         return Promise.reject(new Error(message));
       }
       unlockAudio();
@@ -597,7 +475,6 @@ export function useSoftphone({ enabled }) {
       // destination is ringing when nothing has confirmed that. It starts on
       // a real 180/183 below.
       setCallPhase("ringing");
-      patchDiag({ callState: "trying", sipResponse: null, mic: "acquiring…", packetsSent: 0, packetsReceived: 0 });
 
       const target = destinationForNumber(number, domainRef.current);
       logDiag("placing call to", target);
@@ -617,8 +494,7 @@ export function useSoftphone({ enabled }) {
               // local ringback tone is honest.
               onProgress: (response) => {
                 const code = response?.message?.statusCode;
-                noteDiag(`SIP ${code} ${response?.message?.reasonPhrase || ""}`.trim());
-                patchDiag({ callState: "ringing", sipResponse: sipReasonFor(code, response?.message?.reasonPhrase) });
+                noteDiag(`SIP ${sipReasonFor(code, response?.message?.reasonPhrase)}`);
                 // 183 usually carries early media (real ringback from the
                 // carrier); generating our own on top would double it.
                 if (code === 180) startRingback();
@@ -645,7 +521,6 @@ export function useSoftphone({ enabled }) {
                 noteDiag(`REJECTED ${reason}`);
                 logDiagError("INVITE rejected:", reason);
                 stopRingback();
-                patchDiag({ callState: "ended", sipResponse: reason });
                 setCallFailure({ message: `Call rejected by the carrier: ${reason}`, name: "SipRejected", sipCode: code });
                 setCallPhase("idle");
               },
@@ -658,9 +533,6 @@ export function useSoftphone({ enabled }) {
           const isMicError = ["NotAllowedError", "NotFoundError", "NotReadableError"].includes(err?.name);
           if (isMicError) setMicBlocked(true);
           const message = isMicError ? micErrorMessage(err) : err?.message || "Could not place the call.";
-          // sipResponse is deliberately left as-is: if onReject already set
-          // a carrier reason, that is more specific than this local error.
-          patchDiag({ callState: "ended", mic: isMicError ? "BLOCKED" : "-" });
           // Batched with setCallPhase below so the consumer's phase-transition
           // effect sees both in one render and can tell a local failure apart
           // from a real call that simply went unanswered.
@@ -669,7 +541,7 @@ export function useSoftphone({ enabled }) {
           throw Object.assign(new Error(message), { name: err?.name });
         });
     },
-    [status, unlockAudio, patchDiag, noteDiag]
+    [status, unlockAudio, noteDiag]
   );
 
   const hangup = useCallback(() => {
@@ -713,8 +585,6 @@ export function useSoftphone({ enabled }) {
     callPhase,
     callFailure,
     micBlocked,
-    diagnostics,
-    diagLog,
     callActive: callPhase === "connected",
     muted,
     held,

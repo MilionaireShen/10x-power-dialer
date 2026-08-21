@@ -84,7 +84,17 @@ api.interceptors.response.use(
       }
     }
 
-    if (error.response.status === 401) {
+    // A 401 from an /auth/ endpoint is NOT an expired session — it is the
+    // endpoint's own verdict, e.g. POST /auth/login rejecting a bad
+    // password. Redirecting here wiped the tokens, stamped
+    // logout_reason=session_expired, and hard-navigated back to the login
+    // page, which replaced the real "Invalid email or password." with a
+    // misleading "Your session expired." banner and cleared the form
+    // before the login screen could ever render the actual error.
+    //
+    // Genuine expiry is already handled above: a 401 on a normal request
+    // attempts a refresh, and only redirects here when that refresh fails.
+    if (error.response.status === 401 && !original.url?.includes("/auth/")) {
       clearSessionAndRedirect("session_expired");
     }
 
