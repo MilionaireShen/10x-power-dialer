@@ -27,7 +27,10 @@ const recordingService = {
   finalize: (sessionId, payload) =>
     api.post(`/recordings/sessions/${sessionId}/finalize`, payload).then((r) => r.data),
 
+  // Returns { data, meta } — meta carries total/page/total_pages so the UI can
+  // render pagination without a second request.
   list: (params) => api.get("/recordings", { params }).then((r) => r.data),
+  filterOptions: () => api.get("/recordings/filter-options").then((r) => r.data),
   playUrl: (id) => api.get(`/recordings/${id}/play`).then((r) => r.data),
   downloadUrl: (id) => api.get(`/recordings/${id}/download`).then((r) => r.data),
   reap: () => api.post("/recordings/reap").then((r) => r.data),
