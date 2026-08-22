@@ -207,7 +207,10 @@ function micErrorMessage(err) {
 export function useSoftphone({ enabled }) {
   const [status, setStatus] = useState("idle"); // idle | connecting | registered | unregistered | disconnected | failed
   const [statusError, setStatusError] = useState(null);
-  const [callPhase, setCallPhase] = useState("idle"); // idle | ringing | connected
+  const [callPhase, setCallPhase] = useState("idle"); // idle | incoming | ringing | connected
+  // Set only for a genuine inbound customer call awaiting the agent's decision.
+  // Platform-dialed bridge legs never populate this — they are auto-answered.
+  const [incomingCall, setIncomingCall] = useState(null);
   // Set when a dial attempt dies locally (mic blocked, no device, etc.) —
   // i.e. before any INVITE reached the network. Distinct from a real call
   // that rang and went unanswered, which still deserves a disposition.
@@ -354,20 +357,56 @@ export function useSoftphone({ enabled }) {
             // No local ringback here — that tone is for the agent's own
             // outbound dials, not for a leg the platform is auto-bridging.
             onCallReceived: () => {
-              logDiag("event: onCallReceived — auto-answering");
-              setCallPhase("ringing");
-              user
-                .answer({
-                  sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
-                  // Same rtcp-mux guard as the outbound path — an inbound
-                  // offer that omits it would otherwise be rejected too.
-                  sessionDescriptionHandlerModifiers: [forceRtcpMux],
-                })
-                .catch((err) => {
-                  logDiagError("event: onCallReceived — answer() failed:", err);
-                  setStatusError("Could not answer the incoming call.");
-                  setCallPhase("idle");
-                });
+              // Two very different things arrive as an incoming SIP leg:
+              //
+              //   1. A leg the PLATFORM dialed to bridge an outbound call the
+              //      agent already initiated. Auto-answering is correct — the
+              //      agent asked for that call and the dialer decides the
+              //      bridge, so prompting them would be a pointless extra click.
+              //
+              //   2. A genuine customer calling in. That must be presented for
+              //      Answer/Decline; auto-answering would connect a caller to
+              //      an agent who never agreed to take it.
+              //
+              // The backend marks the second case with an X-Inbound-Call header
+              // on the INVITE (see inboundCallService.ringAgent).
+              const invite = user.session?.request;
+              const isInbound = invite?.getHeader?.("X-Inbound-Call") === "true";
+
+              if (!isInbound) {
+                logDiag("event: onCallReceived — platform bridge leg, auto-answering");
+                setCallPhase("ringing");
+                user
+                  .answer({
+                    sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+                    // Same rtcp-mux guard as the outbound path — an inbound
+                    // offer that omits it would otherwise be rejected too.
+                    sessionDescriptionHandlerModifiers: [forceRtcpMux],
+                  })
+                  .catch((err) => {
+                    logDiagError("event: onCallReceived — answer() failed:", err);
+                    setStatusError("Could not answer the incoming call.");
+                    setCallPhase("idle");
+                  });
+                return;
+              }
+
+              const decodeHeader = (name) => {
+                const raw = invite?.getHeader?.(name);
+                if (!raw) return null;
+                try { return decodeURIComponent(raw); } catch { return raw; }
+              };
+
+              noteDiag("inbound call received — awaiting agent decision");
+              setIncomingCall({
+                callerNumber: decodeHeader("X-Caller-Number"),
+                campaignName: decodeHeader("X-Campaign-Name"),
+                callId: decodeHeader("X-Internal-Call-Id"),
+                hasPreviousContact: invite?.getHeader?.("X-Previous-Contact") === "true",
+                receivedAt: Date.now(),
+              });
+              setCallPhase("incoming");
+              startRingback();
             },
             onCallAnswered: () => {
               noteDiag("call answered (200 OK)");
@@ -392,6 +431,10 @@ export function useSoftphone({ enabled }) {
               noteDiag("call ended (BYE)");
               stopRingback();
               setCallPhase("idle");
+              // Clears a presented inbound call that the CALLER abandoned
+              // before the agent decided — otherwise the prompt would linger
+              // for a call that no longer exists.
+              setIncomingCall(null);
               setMuted(false);
               setHeld(false);
             },
@@ -544,9 +587,49 @@ export function useSoftphone({ enabled }) {
     [status, unlockAudio, noteDiag]
   );
 
+  // Accepts a presented inbound call. Separate from the auto-answer path above
+  // because this one is the agent's explicit decision.
+  const answerIncoming = useCallback(() => {
+    const user = userRef.current;
+    if (!user) return Promise.reject(new Error("Softphone is not connected."));
+    stopRingback();
+    unlockAudio();
+    return user
+      .answer({
+        sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+        sessionDescriptionHandlerModifiers: [forceRtcpMux],
+      })
+      .then(() => {
+        noteDiag("inbound call answered by agent");
+        setIncomingCall(null);
+      })
+      .catch((err) => {
+        logDiagError("answerIncoming failed:", err);
+        setStatusError("Could not answer the incoming call.");
+        setCallPhase("idle");
+        setIncomingCall(null);
+        throw err;
+      });
+  }, [unlockAudio, noteDiag]);
+
+  // Rejects a presented inbound call. The backend sees the leg end and returns
+  // the agent to rotation, so the caller can be offered to someone else rather
+  // than being stranded.
+  const declineIncoming = useCallback(() => {
+    const user = userRef.current;
+    if (!user) return Promise.resolve();
+    stopRingback();
+    noteDiag("inbound call declined by agent");
+    setIncomingCall(null);
+    setCallPhase("idle");
+    return user.decline().catch(() => user.hangup().catch(() => {}));
+  }, [noteDiag]);
+
   const hangup = useCallback(() => {
     const user = userRef.current;
     if (!user) return Promise.resolve();
+    stopRingback();
+    setIncomingCall(null);
     return user.hangup().catch(() => {});
   }, []);
 
@@ -585,6 +668,9 @@ export function useSoftphone({ enabled }) {
     callPhase,
     callFailure,
     micBlocked,
+    incomingCall,
+    answerIncoming,
+    declineIncoming,
     // Read-only accessors onto the streams the SIP session already owns.
     // Exposed for call recording, which needs BOTH: the local track carries
     // only the agent, and the customer exists solely on the remote stream.

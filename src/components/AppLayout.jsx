@@ -10,6 +10,7 @@ import { useAppData } from "../lib/AppDataContext";
 import { useSoftphone } from "../lib/softphone";
 import { useAudioPrompt, LOGIN_PROMPT_SRC } from "../lib/audioPrompt";
 import { useCallRecording } from "../lib/useCallRecording";
+import IncomingCallPanel from "./IncomingCallPanel";
 import monitorService from "../services/monitorService";
 
 // Auth + role enforcement happens per-route via RequireRole. This shell just
@@ -70,6 +71,14 @@ function AgentShell() {
       {/* Separate from the call element above: that one's srcObject belongs
           to SIP.js, so giving it a src would disturb live call media. */}
       <audio ref={promptRef} src={LOGIN_PROMPT_SRC} preload="auto" style={{ display: "none" }} />
+
+      {/* Rendered at shell level so an inbound call reaches the agent
+          whichever page they happen to be on. */}
+      <IncomingCallPanel
+        call={softphone.incomingCall}
+        onAnswer={softphone.answerIncoming}
+        onDecline={softphone.declineIncoming}
+      />
 
       <Sidebar
         open={sidebarOpen}

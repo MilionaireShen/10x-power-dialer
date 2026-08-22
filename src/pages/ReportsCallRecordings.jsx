@@ -29,6 +29,7 @@ const DATE_PRESETS = [
 
 const EMPTY_FILTERS = {
   search: "",
+  direction: "",
   agent_id: "",
   disposition: "",
   duration: "",
@@ -75,7 +76,7 @@ export default function ReportsCallRecordings() {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   // Separate from `filters` so typing doesn't fire a request per keystroke.
   const [searchInput, setSearchInput] = useState("");
-  const [options, setOptions] = useState({ dispositions: [], agents: [], campaigns: [], statuses: [], durations: [] });
+  const [options, setOptions] = useState({ dispositions: [], agents: [], campaigns: [], statuses: [], durations: [], directions: [] });
 
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, page_size: 25, total_pages: 1 });
@@ -144,6 +145,7 @@ export default function ReportsCallRecordings() {
     const labelFor = (key, value) => {
       const find = (list) => list?.find((o) => o.value === value)?.label;
       switch (key) {
+        case "direction": return `Direction: ${find(options.directions) || value}`;
         case "agent_id": return `Agent: ${find(options.agents) || value}`;
         case "disposition": return `Disposition: ${find(options.dispositions) || value}`;
         case "duration": return `Duration: ${find(options.durations) || value}`;
@@ -222,6 +224,8 @@ export default function ReportsCallRecordings() {
           </div>
 
           <div className="flex flex-wrap gap-3">
+            <Select label="Direction" value={filters.direction} onChange={(v) => setFilter("direction", v)}
+              options={options.directions || []} placeholder="All Directions" />
             {options.agents?.length > 0 && (
               <Select label="Agent" value={filters.agent_id} onChange={(v) => setFilter("agent_id", v)}
                 options={options.agents} placeholder="All Agents" />
