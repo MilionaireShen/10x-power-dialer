@@ -400,6 +400,7 @@ export function useSoftphone({ enabled }) {
               noteDiag("inbound call received — awaiting agent decision");
               setIncomingCall({
                 callerNumber: decodeHeader("X-Caller-Number"),
+                didNumber: decodeHeader("X-Did-Number"),
                 campaignName: decodeHeader("X-Campaign-Name"),
                 callId: decodeHeader("X-Internal-Call-Id"),
                 hasPreviousContact: invite?.getHeader?.("X-Previous-Contact") === "true",

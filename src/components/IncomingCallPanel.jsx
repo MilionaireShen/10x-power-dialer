@@ -24,9 +24,23 @@ export default function IncomingCallPanel({ call, onAnswer, onDecline }) {
             <p className="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">
               {call.callerNumber || "Unknown caller"}
             </p>
-            {call.campaignName && (
-              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{call.campaignName}</p>
+            {/* Which of our numbers they dialed. With several DIDs serving
+                different clients, the agent needs to know who they are
+                answering as before they say hello. */}
+            {call.didNumber && (
+              <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                DID called: <span className="font-mono">{call.didNumber}</span>
+              </p>
             )}
+            {call.campaignName && (
+              <p className="mt-1 text-sm font-medium text-[var(--color-text-secondary)]">{call.campaignName}</p>
+            )}
+            {/* The caller is genuinely still ringing at this point — the leg
+                is not answered until Answer is clicked. */}
+            <p className="mt-2 flex items-center justify-center gap-1.5 text-sm text-[var(--color-accent)]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-accent)]" />
+              Ringing…
+            </p>
           </div>
 
           {/* Shown so the agent knows this person has spoken to the team
