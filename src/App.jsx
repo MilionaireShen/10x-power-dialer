@@ -28,6 +28,7 @@ import ReportsProductivityLogs from "./pages/ReportsProductivityLogs";
 import ReportsCallLogs from "./pages/ReportsCallLogs";
 import ReportsCallRecordings from "./pages/ReportsCallRecordings";
 import ReportsSmsLogs from "./pages/ReportsSmsLogs";
+import SmsInbox from "./pages/SmsInbox";
 import ReportsCallbackReports from "./pages/ReportsCallbackReports";
 import ReportsCampaignReports from "./pages/ReportsCampaignReports";
 import ReportsDispositionReports from "./pages/ReportsDispositionReports";
@@ -87,7 +88,10 @@ const REPORTS_PERMS = [
   "listen_recordings",
   "download_recordings",
 ];
-const CAMPAIGNS_PERMS = ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "enable_sms", "edit_sms_templates"];
+const CAMPAIGNS_PERMS = ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates"];
+// The permissions the server actually checks on /sms/conversations, so the
+// route and the API agree on who may open the inbox.
+const SMS_PERMS = ["can_view_sms_conversations", "can_view_agent_sms", "can_view_campaign_sms"];
 const LEADS_PERMS = ["upload_lead_lists", "manage_dnc", "view_leadlist_performance"];
 
 function RoleHome() {
@@ -160,6 +164,7 @@ export default function App() {
                 <Route path="admin/call-center/live-calls" element={<Admin anyPermission={CALLCENTER_PERMS}><CallCenterLiveCalls /></Admin>} />
                 <Route path="admin/call-center/callbacks" element={<Admin anyPermission={CALLCENTER_PERMS}><CallCenterCallbacks /></Admin>} />
                 <Route path="admin/call-center/inbound-queue" element={<Admin anyPermission={CALLCENTER_PERMS}><CallCenterInboundQueue /></Admin>} />
+                <Route path="admin/sms-inbox" element={<Admin anyPermission={SMS_PERMS}><SmsInbox /></Admin>} />
                 <Route path="admin/call-center/broadcast" element={<Admin anyPermission={CALLCENTER_PERMS}><CallCenterBroadcast /></Admin>} />
 
                 {/* Reports */}

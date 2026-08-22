@@ -1,16 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import SidePanel from "./SidePanel";
-import { SMS_VARIABLES, SMS_PREVIEW_SAMPLE } from "../data/mockData";
 import { useToast } from "../lib/ToastContext";
 import campaignService from "../services/campaignService";
+import smsService from "../services/smsService";
 
 const CHAR_LIMIT = 160;
+
+// Keyword lists are stored as arrays; the editor works in comma-separated text
+// because that is what an admin can actually type.
+const parseKeywords = (text) =>
+  text.split(",").map((k) => k.trim().toUpperCase()).filter(Boolean);
+const joinKeywords = (list) => (list || []).join(", ");
 
 export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
   const { notify } = useToast();
   const [tab, setTab] = useState("general");
   const [smsEnabled, setSmsEnabled] = useState(false);
   const [template, setTemplate] = useState("");
+  const [confirmationEnabled, setConfirmationEnabled] = useState(false);
+  const [inboundEnabled, setInboundEnabled] = useState(true);
+  const [allowAgentReply, setAllowAgentReply] = useState(true);
+  const [confirmTemplateId, setConfirmTemplateId] = useState("");
+  const [confirmKeywords, setConfirmKeywords] = useState("");
+  const [declineKeywords, setDeclineKeywords] = useState("");
+  const [rescheduleKeywords, setRescheduleKeywords] = useState("");
+  const [templates, setTemplates] = useState([]);
+  const [variables, setVariables] = useState([]);
+  const [preview, setPreview] = useState(null);
   const [saving, setSaving] = useState(false);
   const textareaRef = useRef(null);
 
@@ -19,38 +35,84 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     setTab("general");
     setSmsEnabled(Boolean(campaign.sms_enabled));
     setTemplate(campaign.sms_template || "");
+    setConfirmationEnabled(Boolean(campaign.sms_appointment_confirmation_enabled));
+    setInboundEnabled(campaign.sms_inbound_enabled !== false);
+    setAllowAgentReply(campaign.sms_allow_agent_reply !== false);
+    setConfirmTemplateId(campaign.sms_confirmation_template_id || "");
+    setConfirmKeywords(joinKeywords(campaign.sms_confirmation_keywords));
+    setDeclineKeywords(joinKeywords(campaign.sms_decline_keywords));
+    setRescheduleKeywords(joinKeywords(campaign.sms_reschedule_keywords));
   }, [campaign]);
+
+  useEffect(() => {
+    if (!campaign) return;
+    smsService.listTemplates({ campaign_id: campaign.id, active_only: "true" })
+      .then((res) => {
+        setTemplates(res?.data?.templates || []);
+        setVariables(res?.data?.variables || []);
+      })
+      .catch(() => { /* the panel still saves without the template list */ });
+  }, [campaign]);
+
+  // Rendered by the server, using the engine that renders the real message —
+  // a preview built here could disagree with what a customer receives.
+  useEffect(() => {
+    if (!template.trim()) { setPreview(null); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await smsService.previewTemplate({ body: template });
+        if (!cancelled) setPreview(res?.data || null);
+      } catch {
+        if (!cancelled) setPreview(null);
+      }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [template]);
 
   if (!campaign) return null;
 
-  const insertVariable = (variable) => {
+  const insertVariable = (key) => {
+    const token = `{{${key}}}`;
     const el = textareaRef.current;
     if (!el) {
-      setTemplate((t) => t + variable);
+      setTemplate((t) => t + token);
       return;
     }
     const start = el.selectionStart ?? template.length;
     const end = el.selectionEnd ?? template.length;
-    const next = template.slice(0, start) + variable + template.slice(end);
-    setTemplate(next);
+    setTemplate(template.slice(0, start) + token + template.slice(end));
     requestAnimationFrame(() => {
       el.focus();
-      const cursor = start + variable.length;
+      const cursor = start + token.length;
       el.setSelectionRange(cursor, cursor);
     });
   };
 
-  const preview = SMS_VARIABLES.reduce((text, v) => text.replaceAll(v, SMS_PREVIEW_SAMPLE[v]), template);
-
   const save = async () => {
     setSaving(true);
     try {
-      await campaignService.update(campaign.id, { sms_enabled: smsEnabled, sms_template: template });
+      await campaignService.update(campaign.id, {
+        sms_enabled: smsEnabled,
+        sms_template: template,
+        sms_appointment_confirmation_enabled: confirmationEnabled,
+        sms_inbound_enabled: inboundEnabled,
+        sms_allow_agent_reply: allowAgentReply,
+        sms_confirmation_template_id: confirmTemplateId || null,
+        // Falls back to the defaults rather than saving an empty list, which
+        // would leave a confirmation campaign with no way to recognise a YES.
+        sms_confirmation_keywords: parseKeywords(confirmKeywords).length
+          ? parseKeywords(confirmKeywords) : ["YES", "Y", "CONFIRM", "CONFIRMED"],
+        sms_decline_keywords: parseKeywords(declineKeywords).length
+          ? parseKeywords(declineKeywords) : ["NO", "CANCEL", "DECLINE"],
+        sms_reschedule_keywords: parseKeywords(rescheduleKeywords).length
+          ? parseKeywords(rescheduleKeywords) : ["RESCHEDULE", "CHANGE", "MOVE"],
+      });
       notify(`SMS settings saved for "${campaign.name}".`, "success", { title: "Campaign Updated" });
       onClose();
       onSaved?.();
     } catch (err) {
-      notify(err?.message || "Could not save SMS settings.", "error");
+      notify(err?.response?.data?.message || "Could not save SMS settings.", "error");
     } finally {
       setSaving(false);
     }
@@ -72,31 +134,79 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
           <Row label="Dialing Mode" value={`${campaign.dialing_mode} Mode`} />
           <Row label="Status" value={campaign.status} />
           <Row label="Agents Assigned" value={campaign.agent_count} />
-          <Row label="Leads Remaining" value={campaign.leads_remaining} />
           <Row label="Wrap-Up Time" value={`${campaign.wrapup_time_seconds}s`} />
         </dl>
       )}
 
       {tab === "sms" && (
         <div className="space-y-5">
-          <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
-            <div>
-              <p className="text-sm font-medium text-[var(--color-text-primary)]">Enable SMS for this Campaign</p>
-              <p className="text-xs text-[var(--color-text-tertiary)]">Off by default — turn on per campaign</p>
-            </div>
-            <button
-              onClick={() => setSmsEnabled((v) => !v)}
-              className={`h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${smsEnabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}
-            >
-              <span className={`block h-5 w-5 translate-x-0.5 rounded-full bg-white transition-transform duration-300 ${smsEnabled ? "translate-x-5" : ""}`} />
-            </button>
-          </div>
+          <Toggle
+            label="Enable SMS for this Campaign"
+            hint="Off by default — turn on per campaign"
+            value={smsEnabled}
+            onChange={setSmsEnabled}
+          />
 
           {smsEnabled && (
             <>
+              <Toggle
+                label="Appointment Confirmation"
+                hint="Let agents send a confirmation and track the customer's reply"
+                value={confirmationEnabled}
+                onChange={setConfirmationEnabled}
+              />
+              <Toggle
+                label="Receive Inbound SMS"
+                hint="Replies are always stored; this controls whether they are acted on"
+                value={inboundEnabled}
+                onChange={setInboundEnabled}
+              />
+              <Toggle
+                label="Allow Agent Replies"
+                hint="Off means only admins and managers can send on this campaign"
+                value={allowAgentReply}
+                onChange={setAllowAgentReply}
+              />
+
+              {confirmationEnabled && (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">
+                      Confirmation Template
+                    </label>
+                    <select value={confirmTemplateId} onChange={(e) => setConfirmTemplateId(e.target.value)} className="input-field">
+                      <option value="">Use the campaign template below</option>
+                      {templates
+                        .filter((t) => t.message_type === "appointment_confirmation")
+                        .map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                    <p className="text-xs font-medium text-[var(--color-text-secondary)]">Reply Keywords</p>
+                    <KeywordField
+                      label="Confirms the appointment" value={confirmKeywords} onChange={setConfirmKeywords}
+                      placeholder="YES, Y, CONFIRM"
+                    />
+                    <KeywordField
+                      label="Declines the appointment" value={declineKeywords} onChange={setDeclineKeywords}
+                      placeholder="NO, CANCEL"
+                    />
+                    <KeywordField
+                      label="Asks to reschedule" value={rescheduleKeywords} onChange={setRescheduleKeywords}
+                      placeholder="RESCHEDULE, MOVE"
+                    />
+                    <p className="text-[11px] text-[var(--color-text-tertiary)]">
+                      Anything else a customer sends is recorded as a question for someone to read — it is never
+                      guessed at. STOP, HELP and START are handled separately and cannot be reconfigured.
+                    </p>
+                  </div>
+                </>
+              )}
+
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
-                  <label className="text-xs font-medium text-[var(--color-text-secondary)]">SMS Template</label>
+                  <label className="text-xs font-medium text-[var(--color-text-secondary)]">Campaign SMS Template</label>
                   <span className={`text-xs ${template.length > CHAR_LIMIT ? "text-[var(--color-danger)]" : "text-[var(--color-text-tertiary)]"}`}>
                     {template.length}/{CHAR_LIMIT}
                   </span>
@@ -106,7 +216,7 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
                   value={template}
                   onChange={(e) => setTemplate(e.target.value)}
                   rows={5}
-                  placeholder="Hi {lead_name}, this is {agent_name} with {company_name}…"
+                  placeholder="Hi {{first_name}}, this is {{agent_name}} with {{company_name}}…"
                   className="input-field resize-none"
                 />
               </div>
@@ -114,14 +224,15 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
               <div>
                 <p className="mb-1.5 text-xs font-medium text-[var(--color-text-secondary)]">Insert Variable</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {SMS_VARIABLES.map((v) => (
+                  {variables.map((v) => (
                     <button
-                      key={v}
+                      key={v.key}
                       type="button"
-                      onClick={() => insertVariable(v)}
-                      className="pill border border-[var(--color-accent)]/25 bg-[var(--color-accent-tint)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white transition-colors"
+                      title={v.label}
+                      onClick={() => insertVariable(v.key)}
+                      className="pill border border-[var(--color-accent)]/25 bg-[var(--color-accent-tint)] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)] hover:text-white"
                     >
-                      {v}
+                      {`{{${v.key}}}`}
                     </button>
                   ))}
                 </div>
@@ -130,7 +241,7 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
               <div>
                 <p className="mb-1.5 text-xs font-medium text-[var(--color-text-secondary)]">Live Preview</p>
                 <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-sm text-[var(--color-text-primary)]">
-                  {preview || <span className="text-[var(--color-text-tertiary)]">Preview will appear here…</span>}
+                  {preview?.text || <span className="text-[var(--color-text-tertiary)]">Preview will appear here…</span>}
                 </div>
               </div>
             </>
@@ -148,11 +259,37 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
   );
 }
 
+function Toggle({ label, hint, value, onChange }) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
+      <div className="pr-3">
+        <p className="text-sm font-medium text-[var(--color-text-primary)]">{label}</p>
+        <p className="text-xs text-[var(--color-text-tertiary)]">{hint}</p>
+      </div>
+      <button
+        onClick={() => onChange(!value)}
+        className={`h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${value ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}
+      >
+        <span className={`block h-5 w-5 translate-x-0.5 rounded-full bg-white transition-transform duration-300 ${value ? "translate-x-5" : ""}`} />
+      </button>
+    </div>
+  );
+}
+
+function KeywordField({ label, value, onChange, placeholder }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] text-[var(--color-text-tertiary)]">{label}</span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="input-field py-1.5 text-sm" />
+    </label>
+  );
+}
+
 function Row({ label, value }) {
   return (
-    <div className="flex justify-between gap-3 capitalize">
-      <dt className="text-[var(--color-text-tertiary)]">{label}</dt>
-      <dd className="text-right text-[var(--color-text-secondary)]">{value}</dd>
+    <div className="flex items-center justify-between border-b border-[var(--color-border)] py-2 last:border-0">
+      <dt className="text-[var(--color-text-secondary)]">{label}</dt>
+      <dd className="font-medium text-[var(--color-text-primary)]">{value}</dd>
     </div>
   );
 }
@@ -161,8 +298,10 @@ function TabButton({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
-      className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-200 ${
-        active ? "border-[var(--color-accent)] text-[var(--color-text-primary)]" : "border-transparent text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+      className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+        active
+          ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+          : "border-transparent text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
       }`}
     >
       {children}

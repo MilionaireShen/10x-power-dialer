@@ -7,10 +7,8 @@ import {
   CLIENTS,
   DISPOSITIONS,
   SCRIPTS,
-  SMS_TEMPLATES,
   PHONE_NUMBERS,
   IVR_RULES,
-  SEED_SMS_LOG,
   INTEGRATIONS,
   DEFAULT_ADMIN_SETTINGS,
   DEFAULT_MANAGER_PERMISSIONS,
@@ -50,10 +48,8 @@ export function AppDataProvider({ children }) {
   const [clients, setClients] = useState(CLIENTS);
   const [dispositions, setDispositions] = useState(DISPOSITIONS);
   const [scripts, setScripts] = useState(SCRIPTS);
-  const [smsTemplates, setSmsTemplates] = useState(SMS_TEMPLATES);
   const [phoneNumbers, setPhoneNumbers] = useState(PHONE_NUMBERS);
   const [ivrRules, setIvrRules] = useState(IVR_RULES);
-  const [smsLog, setSmsLog] = useState(SEED_SMS_LOG);
   const [integrations, setIntegrations] = useState(INTEGRATIONS);
   const [adminSettings, setAdminSettings] = useState(DEFAULT_ADMIN_SETTINGS);
   const [managerPermissionTemplate, setManagerPermissionTemplate] = useState(DEFAULT_MANAGER_PERMISSIONS);
@@ -240,14 +236,6 @@ export function AppDataProvider({ children }) {
     setScripts((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }, []);
 
-  const addSmsTemplate = useCallback((tmpl) => {
-    setSmsTemplates((prev) => [{ id: nextId("tmpl"), ...tmpl }, ...prev]);
-  }, []);
-
-  const updateSmsTemplate = useCallback((id, patch) => {
-    setSmsTemplates((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-  }, []);
-
   const addPhoneNumber = useCallback((num) => {
     setPhoneNumbers((prev) => [{ id: nextId("num"), status: "Active", campaignId: null, recordingEnabled: true, spamFlag: false, ...num }, ...prev]);
   }, []);
@@ -262,10 +250,6 @@ export function AppDataProvider({ children }) {
 
   const removeIvrRule = useCallback((id) => {
     setIvrRules((prev) => prev.filter((r) => r.id !== id));
-  }, []);
-
-  const addSmsLog = useCallback((entry) => {
-    setSmsLog((prev) => [{ id: nextId("sms"), sentAt: Date.now(), status: "Delivered", ...entry }, ...prev]);
   }, []);
 
   // Config is saved regardless of connect state (matches real integrations —
@@ -512,17 +496,12 @@ export function AppDataProvider({ children }) {
       scripts,
       addScript,
       updateScript,
-      smsTemplates,
-      addSmsTemplate,
-      updateSmsTemplate,
       phoneNumbers,
       addPhoneNumber,
       updatePhoneNumber,
       ivrRules,
       addIvrRule,
       removeIvrRule,
-      smsLog,
-      addSmsLog,
       integrations,
       connectIntegration,
       disconnectIntegration,
@@ -576,10 +555,8 @@ export function AppDataProvider({ children }) {
       clients,
       dispositions,
       scripts,
-      smsTemplates,
       phoneNumbers,
       ivrRules,
-      smsLog,
       integrations,
       adminSettings,
       managerPermissionTemplate,
@@ -604,13 +581,10 @@ export function AppDataProvider({ children }) {
       setUserStatus,
       addScript,
       updateScript,
-      addSmsTemplate,
-      updateSmsTemplate,
       addPhoneNumber,
       updatePhoneNumber,
       addIvrRule,
       removeIvrRule,
-      addSmsLog,
       connectIntegration,
       disconnectIntegration,
       updateAdminSettings,

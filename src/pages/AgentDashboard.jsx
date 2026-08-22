@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Check, MapPin, CalendarDays } from "lucide-react";
+import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Check, MapPin, CalendarDays, AlertTriangle } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
 import { useToast } from "../lib/ToastContext";
@@ -13,12 +13,14 @@ import CallbackPopup from "../components/CallbackPopup";
 import AvailabilityPanel from "../components/AvailabilityPanel";
 import HotkeyBar from "../components/HotkeyBar";
 import SessionEndedOverlay from "../components/SessionEndedOverlay";
-import { DISPOSITIONS, SMS_PREVIEW_SAMPLE } from "../data/mockData";
+import { DISPOSITIONS } from "../data/mockData";
 import { formatDuration, wrapUpVisual, getStatusVisual } from "../lib/statusColors";
 import { openPropertyOnMap } from "../lib/googleMaps";
 import { extractAreaCode } from "../lib/didReputationEngine";
 import { matchesBinding } from "../lib/hotkeys";
 import campaignService from "../services/campaignService";
+import smsService from "../services/smsService";
+import SmsConversation from "../components/SmsConversation";
 import hotkeyService from "../services/hotkeyService";
 import scriptService from "../services/scriptService";
 import agentService from "../services/agentService";
@@ -209,6 +211,9 @@ export default function AgentDashboard() {
   const [notes, setNotes] = useState("");
 
   const [lead, setLead] = useState(buildEmptyLead);
+  // The backend call row for the call in progress, so an appointment booked
+  // during it can be linked back to the recording and call history.
+  const [activeCallId, setActiveCallId] = useState(null);
   const [smsOpen, setSmsOpen] = useState(false);
   const [smsSent, setSmsSent] = useState(false);
   const [smsNote, setSmsNote] = useState("");
@@ -519,7 +524,10 @@ export default function AgentDashboard() {
       .manual(trimmed)
       .then((res) => {
         const callId = res?.data?.id;
-        if (callId) recording?.setCallContext?.({ callId, toNumber: trimmed, direction: "outbound" });
+        if (callId) {
+          setActiveCallId(callId);
+          recording?.setCallContext?.({ callId, toNumber: trimmed, direction: "outbound" });
+        }
       })
       .catch((err) => {
         console.warn("[dialer] could not declare manual call:", err?.message || err);
@@ -727,7 +735,7 @@ export default function AgentDashboard() {
                 onToggleMute={softphone.toggleMute}
                 onToggleHold={softphone.toggleHold}
                 onEndCall={handleEndCall}
-                smsEnabled={Boolean(campaign?.smsEnabled)}
+                smsEnabled={Boolean(campaign?.sms_enabled)}
                 onOpenSms={() => setSmsOpen(true)}
                 onViewProperty={handleViewProperty}
                 onOpenAvailability={() => setAvailabilityOpen(true)}
@@ -778,14 +786,8 @@ export default function AgentDashboard() {
         <SmsForm
           campaign={campaign}
           lead={lead}
-          agentName={user.name}
-          smsNote={smsNote}
-          setSmsNote={setSmsNote}
-          sent={smsSent}
-          onSend={() => {
-            setSmsSent(true);
-            notify("Confirmation SMS sent to lead.", "success");
-          }}
+          callId={activeCallId}
+          onSent={() => setSmsSent(true)}
         />
       </SidePanel>
 
@@ -1229,49 +1231,134 @@ function BottomBar({ campaignName, status, statusSince }) {
   );
 }
 
-function SmsForm({ campaign, lead, agentName, smsNote, setSmsNote, sent, onSend }) {
-  if (!campaign?.smsEnabled) return null;
+/**
+ * Books the appointment, renders its confirmation from the campaign's
+ * template, and sends it — all without leaving the call.
+ *
+ * Once sent it turns into the live thread, so the agent can ask "did you get
+ * the text?" and watch the customer's reply arrive while still on the phone.
+ */
+function SmsForm({ campaign, lead, callId, onSent }) {
+  const { notify } = useToast();
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [body, setBody] = useState("");
+  const [appointmentId, setAppointmentId] = useState(null);
+  const [conversationId, setConversationId] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-  const filled = (campaign.smsTemplate || "")
-    .replaceAll("{lead_name}", lead.fullName)
-    .replaceAll("{street_address}", lead.street)
-    .replaceAll("{city}", lead.city)
-    .replaceAll("{state}", lead.state)
-    .replaceAll("{zip_code}", lead.zip)
-    .replaceAll("{agent_name}", agentName)
-    .replaceAll("{appointment_time}", lead.customValues?.["cf-3"] || SMS_PREVIEW_SAMPLE["{appointment_time}"])
-    .replaceAll("{company_name}", "10X Power Dialer");
+  // Booked and rendered together: the template can only quote a date and
+  // address once there is an appointment record holding them.
+  const build = useCallback(async () => {
+    if (!campaign?.id) return;
+    setBusy(true);
+    try {
+      const appt = await smsService.createAppointment({
+        campaign_id: campaign.id,
+        call_id: callId || null,
+        title: `${campaign.name} appointment`,
+        // Sent only when the agent actually set one. An empty field means no
+        // time was agreed, and the message says nothing about timing rather
+        // than inventing something.
+        scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+        street_address: lead.street || null,
+        city: lead.city || null,
+        state: lead.state || null,
+        zip_code: lead.zip || null,
+      });
+      const id = appt?.data?.id;
+      setAppointmentId(id);
+      const res = await smsService.confirmationPreview(id);
+      setPreview(res?.data || null);
+      setBody(res?.data?.text || "");
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not prepare the confirmation.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }, [campaign, callId, scheduledAt, lead, notify]);
+
+  useEffect(() => { build(); }, [build]);
+
+  const send = async () => {
+    if (!appointmentId) return;
+    setBusy(true);
+    try {
+      const res = await smsService.sendConfirmation(appointmentId, {
+        body,
+        to_number: lead.phone,
+      });
+      setConversationId(res?.data?.conversation?.id || null);
+      notify("Confirmation sent.", "success");
+      onSent?.();
+    } catch (err) {
+      notify(err?.response?.data?.message || "The confirmation could not be sent.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // After sending, the panel becomes the conversation — the agent needs to see
+  // the customer's reply, not a "sent" tick.
+  if (conversationId) {
+    return (
+      <div className="-mx-6 -mb-6 h-[70vh]">
+        <SmsConversation conversationId={conversationId} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
       <div>
-        <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Message Preview</label>
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-sm text-[var(--color-text-primary)]">{filled}</div>
+        <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">
+          Appointment Date &amp; Time <span className="font-normal text-[var(--color-text-tertiary)]">(optional)</span>
+        </label>
+        <input
+          type="datetime-local"
+          value={scheduledAt}
+          onChange={(e) => setScheduledAt(e.target.value)}
+          className="input-field"
+        />
+        <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+          Left blank, the message simply confirms the appointment without quoting a time.
+        </p>
       </div>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Message</label>
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={5}
+          className="input-field resize-none text-sm"
+          placeholder={busy ? "Preparing…" : "The confirmation will appear here."}
+        />
+        {preview?.segments > 1 && (
+          <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">{preview.segments} SMS segments</p>
+        )}
+        {/* Said plainly rather than shown as a placeholder: the customer will
+            never see a {{variable}}, but the agent should know the sentence is
+            thinner than the template intended. */}
+        {preview?.unresolved_variables?.length > 0 && (
+          <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-[var(--color-warning)]">
+            <AlertTriangle size={12} className="mt-px shrink-0" />
+            Not on file, so left out: {preview.unresolved_variables.join(", ").replace(/_/g, " ")}
+          </p>
+        )}
+      </div>
+
       <div>
         <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Sending To</label>
         <input value={lead.phone} readOnly className="input-field bg-[var(--color-bg)]" />
       </div>
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Add a short note (optional)</label>
-        <textarea
-          value={smsNote}
-          onChange={(e) => setSmsNote(e.target.value)}
-          rows={2}
-          placeholder="Internal note about this SMS…"
-          className="input-field resize-none"
-        />
-      </div>
 
-      {sent ? (
-        <div className="flex items-center gap-2 rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success-tint)] px-4 py-3 text-sm font-medium text-[var(--color-success)]">
-          <Check size={16} /> SMS Sent ✓
-        </div>
-      ) : (
-        <button onClick={onSend} className="btn-purple w-full py-3">
-          Send
-        </button>
-      )}
+      <button onClick={send} disabled={busy || !body.trim() || !lead.phone} className="btn-purple w-full py-3 disabled:opacity-40">
+        {busy ? "Working…" : "Send Confirmation SMS"}
+      </button>
+      <p className="text-[11px] text-[var(--color-text-tertiary)]">
+        The appointment is only marked confirmed when the customer replies — a delivered text is not a confirmation.
+      </p>
     </div>
   );
 }

@@ -109,10 +109,21 @@ export const PERMISSION_SECTIONS = [
   {
     key: "sms",
     label: "SMS",
+    // These keys are the user_permissions column names, which is what the JWT
+    // carries and what the server checks. The rest of this list still uses the
+    // older short names, so a manager's SMS access is the only part of the
+    // checklist that is genuinely enforced end to end today.
     permissions: [
-      { key: "enable_sms", label: "Enable SMS on campaigns" },
-      { key: "edit_sms_templates", label: "Edit SMS templates" },
-      { key: "view_sms_reports", label: "View SMS delivery reports" },
+      { key: "can_view_sms_conversations", label: "View SMS conversations" },
+      { key: "can_send_sms", label: "Send SMS" },
+      { key: "can_view_agent_sms", label: "View agent SMS" },
+      { key: "can_view_campaign_sms", label: "View campaign SMS" },
+      { key: "can_view_sms_delivery_status", label: "View SMS delivery status" },
+      { key: "can_view_appointment_confirmations", label: "View appointment confirmations" },
+      { key: "can_export_sms_history", label: "Export SMS history" },
+      { key: "can_enable_sms", label: "Enable SMS on campaigns" },
+      { key: "can_edit_sms_templates", label: "Edit SMS templates" },
+      { key: "can_view_sms_logs", label: "View SMS delivery reports" },
     ],
   },
   {
@@ -371,27 +382,10 @@ export const CLIENTS = [
   // demonstrates the "missing calendar configuration" fallback.
 ];
 
-export const SMS_VARIABLES = [
-  "{lead_name}",
-  "{street_address}",
-  "{city}",
-  "{state}",
-  "{zip_code}",
-  "{agent_name}",
-  "{appointment_time}",
-  "{company_name}",
-];
-
-export const SMS_PREVIEW_SAMPLE = {
-  "{lead_name}": "Patricia Alvarado",
-  "{street_address}": "412 Sunview Terrace",
-  "{city}": "Anaheim",
-  "{state}": "CA",
-  "{zip_code}": "92805",
-  "{agent_name}": "Jordan Blake",
-  "{appointment_time}": "Thu 2:00 PM",
-  "{company_name}": "10X Power Dialer",
-};
+// Removed: SMS_VARIABLES, SMS_PREVIEW_SAMPLE, SMS_TEMPLATES and SEED_SMS_LOG.
+// Templates, the variable catalogue and the message log all come from the
+// backend now. Sample SMS data sitting alongside real conversations is a
+// message somebody eventually believes was really sent.
 
 // Locked fields every lead card always shows — cannot be deleted or reordered by admins.
 export const DEFAULT_LEAD_FIELDS = [
@@ -789,23 +783,6 @@ export const SCRIPTS = [
   },
 ];
 
-export const SMS_TEMPLATES = [
-  {
-    id: "tmpl-1",
-    name: "Appointment Confirmation",
-    body: "Hi {lead_name}, this is {agent_name} with {company_name} confirming your appointment. See you soon!",
-  },
-  {
-    id: "tmpl-2",
-    name: "Follow-Up Info",
-    body: "Hi {lead_name}, thanks for your time today. Here's the info you requested from {company_name} — reply STOP to opt out.",
-  },
-  {
-    id: "tmpl-3",
-    name: "Missed You",
-    body: "Hi {lead_name}, sorry we missed you! This is {agent_name} from {company_name} — call us back anytime.",
-  },
-];
 
 // Builds a short seeded score-history trail (used by the DID reputation
 // sparkline + trend factor comparisons) walking from `startScore` toward
@@ -1101,11 +1078,6 @@ export const INTEGRATIONS = [
   },
 ];
 
-export const SEED_SMS_LOG = [
-  { id: "sms-1", agentName: "Jordan Blake", leadName: "Patricia Alvarado", phone: "(714) 555-0138", campaign: "Solar Homeowner Outreach", sentAt: Date.now() - 1000 * 60 * 40, status: "Delivered" },
-  { id: "sms-2", agentName: "Marcus Lee", leadName: "Kenneth Ubah", phone: "(602) 555-0119", campaign: "Solar Homeowner Outreach", sentAt: Date.now() - 1000 * 60 * 130, status: "Delivered" },
-  { id: "sms-3", agentName: "Maria Santos", leadName: "Diane Foster", phone: "(313) 555-0187", campaign: "Q3 Insurance Renewals", sentAt: Date.now() - 1000 * 60 * 200, status: "Failed" },
-];
 
 export const DEFAULT_ADMIN_SETTINGS = {
   general: { companyName: "10X Power Dialer", timezone: "America/Los_Angeles" },

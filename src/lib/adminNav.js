@@ -19,13 +19,14 @@ export const ADMIN_NAV = [
     key: "callcenter",
     label: "Call Center",
     icon: Headphones,
-    anyPermission: ["view_agent_monitor", "listen_live", "whisper_agents", "barge_calls", "send_broadcast"],
+    anyPermission: ["view_agent_monitor", "listen_live", "whisper_agents", "barge_calls", "send_broadcast", "can_view_sms_conversations", "can_view_agent_sms", "can_view_campaign_sms"],
     items: [
       { label: "Agent Monitor", path: "/admin/call-center/agent-monitor" },
       { label: "Live Calls", path: "/admin/call-center/live-calls" },
       { label: "Callbacks", path: "/admin/call-center/callbacks" },
       { label: "Inbound Queue", path: "/admin/call-center/inbound-queue" },
       { label: "Broadcast Message", path: "/admin/call-center/broadcast" },
+      { label: "SMS Inbox", path: "/admin/sms-inbox" },
     ],
   },
   {
@@ -63,7 +64,7 @@ export const ADMIN_NAV = [
     key: "campaigns",
     label: "Campaigns",
     icon: FolderKanban,
-    anyPermission: ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "enable_sms", "edit_sms_templates"],
+    anyPermission: ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates"],
     items: [
       { label: "All Campaigns", path: "/admin/campaigns/all" },
       { label: "Create New Campaign", path: "/admin/campaigns/all?create=1" },
