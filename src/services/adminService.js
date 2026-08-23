@@ -73,6 +73,16 @@ const adminService = {
   // ---- DID reputation scoring ----
   getReputationSettings: (params) => api.get("/admin/reputation-settings", { params }).then((r) => r.data),
   saveReputationSettings: (payload) => api.put("/admin/reputation-settings", payload).then((r) => r.data),
+
+  // ---- Integration health ----
+  testIntegration: (provider) => api.post("/admin/integrations/" + provider + "/test").then((r) => r.data),
+  disconnectIntegration: (provider) => api.delete("/admin/integrations/" + provider).then((r) => r.data),
+
+  // ---- Account funding ----
+  fundingStatus: (params) => api.get("/admin/funding", { params }).then((r) => r.data),
+  saveFundingSettings: (payload) => api.put("/admin/funding/settings", payload).then((r) => r.data),
+  checkFunding: () => api.post("/admin/funding/check").then((r) => r.data),
+  resumePausedCampaigns: (payload) => api.post("/admin/funding/resume-campaigns", payload || {}).then((r) => r.data),
 };
 
 export default adminService;

@@ -5,6 +5,7 @@ import AdminSidebar from "./AdminSidebar";
 import TopNav from "./TopNav";
 import MonitoringBar from "./MonitoringBar";
 import DidAlertBanner from "./DidAlertBanner";
+import FundingBanner from "./FundingBanner";
 import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
 import { useSoftphone } from "../lib/softphone";
@@ -125,6 +126,7 @@ function AdminShell() {
             }}
           />
         ))}
+        <FundingBanner />
         <DidAlertBanner />
         <main className="min-w-0 flex-1">
           <Outlet />
