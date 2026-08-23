@@ -83,6 +83,23 @@ const adminService = {
   saveFundingSettings: (payload) => api.put("/admin/funding/settings", payload).then((r) => r.data),
   checkFunding: () => api.post("/admin/funding/check").then((r) => r.data),
   resumePausedCampaigns: (payload) => api.post("/admin/funding/resume-campaigns", payload || {}).then((r) => r.data),
+
+  // ---- Phone System ----
+  phoneNumbers: () => api.get("/admin/phone-system/numbers").then((r) => r.data),
+  assignNumber: (didId, payload) =>
+    api.post("/admin/phone-system/numbers/" + didId + "/assign", payload).then((r) => r.data),
+
+  getRecordingSettings: () => api.get("/admin/phone-system/recording").then((r) => r.data),
+  saveRecordingSettings: (payload) => api.put("/admin/phone-system/recording", payload).then((r) => r.data),
+  // Asked by the agent's browser before it starts recording a call.
+  shouldRecord: (params) => api.get("/admin/phone-system/should-record", { params }).then((r) => r.data),
+
+  getVoicemailSettings: () => api.get("/admin/phone-system/voicemail").then((r) => r.data),
+  saveVoicemailSettings: (payload) => api.put("/admin/phone-system/voicemail", payload).then((r) => r.data),
+
+  didHealth: (didId, params) =>
+    api.get("/admin/phone-system/dids/" + didId + "/health", { params }).then((r) => r.data),
+  recalculateDidScores: () => api.post("/admin/phone-system/recalculate-scores").then((r) => r.data),
 };
 
 export default adminService;

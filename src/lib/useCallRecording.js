@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createCallRecorder, createChunkUploader, CHUNK_MS } from "./callRecorder";
 import recordingService from "../services/recordingService";
+import adminService from "../services/adminService";
 
 function log(...args) {
   console.log("[recording]", ...args);
@@ -20,7 +21,7 @@ function log(...args) {
  * @param callContext - metadata to file the recording under.
  */
 export function useCallRecording({ softphone, enabled = true }) {
-  const [status, setStatus] = useState("idle"); // idle | recording | uploading | completed | incomplete | failed
+  const [status, setStatus] = useState("idle"); // idle | disabled | recording | uploading | completed | incomplete | failed
   const [stats, setStats] = useState({ uploaded: 0, pending: 0, failed: 0 });
   const [error, setError] = useState(null);
 
@@ -145,17 +146,47 @@ export function useCallRecording({ softphone, enabled = true }) {
   // stream carries no track and there would be nothing of the customer to
   // record.
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) return undefined;
     const connected = softphone?.callPhase === "connected";
 
     if (connected && !activeCallRef.current) {
-      activeCallRef.current = callContextRef.current?.callId || `call-${Date.now()}`;
-      startRecording();
+      const ctx = callContextRef.current;
+      activeCallRef.current = ctx?.callId || `call-${Date.now()}`;
+
+      // Asked before every recording, not once at startup. Recording somebody's
+      // voice is exactly the thing that must honour the switch that says not
+      // to — and a setting changed mid-shift has to take effect on the next
+      // call, not at the next page load.
+      //
+      // Refused rather than recorded when the check itself fails: not knowing
+      // whether recording is permitted is not a reason to record.
+      let cancelled = false;
+      adminService
+        .shouldRecord({ campaign_id: ctx?.campaignId, did_id: ctx?.didId })
+        .then((res) => {
+          if (cancelled) return;
+          if (res?.data?.record === false) {
+            activeCallRef.current = null;
+            setStatus("disabled");
+            return;
+          }
+          startRecording();
+        })
+        .catch(() => {
+          if (cancelled) return;
+          activeCallRef.current = null;
+          setStatus("disabled");
+          setError("Could not confirm that recording is permitted, so this call was not recorded.");
+        });
+
+      return () => { cancelled = true; };
     }
+
     if (!connected && activeCallRef.current) {
       stopAndFinalize();
       callContextRef.current = null;
     }
+    return undefined;
   }, [enabled, softphone?.callPhase, startRecording, stopAndFinalize]);
 
   // A refresh or tab close tears down the WebRTC session regardless, so the
