@@ -53,6 +53,26 @@ const adminService = {
   deleteLead: (id) => api.delete(`/admin/leads/${id}`).then((r) => r.data),
   assignLeads: (payload) => api.post("/admin/leads/assign", payload).then((r) => r.data),
   leadFilterOptions: () => api.get("/admin/leads/filter-options").then((r) => r.data),
+
+  // ---- IVR routing ----
+  listIvrRules: (params) => api.get("/admin/ivr-rules", { params }).then((r) => r.data),
+  createIvrRule: (payload) => api.post("/admin/ivr-rules", payload).then((r) => r.data),
+  updateIvrRule: (id, payload) => api.patch(`/admin/ivr-rules/${id}`, payload).then((r) => r.data),
+  deleteIvrRule: (id) => api.delete(`/admin/ivr-rules/${id}`).then((r) => r.data),
+
+  // ---- Custom reports ----
+  listCustomReports: () => api.get("/admin/custom-reports").then((r) => r.data),
+  createCustomReport: (payload) => api.post("/admin/custom-reports", payload).then((r) => r.data),
+  runCustomReport: (id, params) => api.get(`/admin/custom-reports/${id}/run`, { params }).then((r) => r.data),
+  deleteCustomReport: (id) => api.delete(`/admin/custom-reports/${id}`).then((r) => r.data),
+
+  // ---- Integrations ----
+  listIntegrations: () => api.get("/admin/integrations").then((r) => r.data),
+  saveIntegration: (payload) => api.put("/admin/integrations", payload).then((r) => r.data),
+
+  // ---- DID reputation scoring ----
+  getReputationSettings: (params) => api.get("/admin/reputation-settings", { params }).then((r) => r.data),
+  saveReputationSettings: (payload) => api.put("/admin/reputation-settings", payload).then((r) => r.data),
 };
 
 export default adminService;

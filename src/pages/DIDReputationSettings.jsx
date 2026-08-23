@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, AlertTriangle, GripVertical } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
-import { useAppData } from "../lib/AppDataContext";
 import userService from "../services/userService";
+import adminService from "../services/adminService";
+import { toNested, toFlat } from "../lib/didSettingsMapping";
+import { Save } from "lucide-react";
 import { useToast } from "../lib/ToastContext";
 
 const WEIGHT_LABELS = {
@@ -27,12 +29,48 @@ const METHOD_OPTIONS = ["email", "in-app", "both"];
 const METHOD_LABEL = { email: "Email", "in-app": "In-App", both: "Email + In-App" };
 
 export default function DIDReputationSettings() {
-  const { didSettings, updateDidSettings } = useAppData();
+  const { notify } = useToast();
   const [users, setUsers] = useState([]);
+  // Held locally while being edited and written on Save, rather than firing a
+  // request per keystroke — these are eight weights that must total 100, and
+  // saving each one on its own would reject every intermediate state.
+  const [didSettings, setDidSettings] = useState(toNested(null));
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     userService.list().then((r) => setUsers(r?.data || [])).catch(() => setUsers([]));
-  }, []);
-  const { notify } = useToast();
+    adminService
+      .getReputationSettings()
+      .then((r) => setDidSettings(toNested(r?.data?.settings)))
+      .catch(() => notify("Could not load reputation settings — showing defaults.", "warning"))
+      .finally(() => setLoading(false));
+  }, [notify]);
+
+  const updateDidSettings = (section, patch) => {
+    setDirty(true);
+    setDidSettings((prev) => ({
+      ...prev,
+      // A replacement array (the rotation order) rather than a patch of keys.
+      [section]: Array.isArray(patch) ? patch : { ...prev[section], ...patch },
+    }));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await adminService.saveReputationSettings(toFlat(didSettings));
+      setDirty(false);
+      notify("Reputation settings saved.", "success");
+    } catch (err) {
+      // The server refuses a weight set that does not total 100, and says what
+      // it does total.
+      notify(err?.response?.data?.message || "Could not save reputation settings.", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const weightTotal = Object.values(didSettings.weights).reduce((a, b) => a + b, 0);
 
@@ -46,7 +84,15 @@ export default function DIDReputationSettings() {
 
   return (
     <div>
-      <ScreenHeader category="Phone System" title="DID Reputation Settings" />
+      <ScreenHeader
+        category="Phone System"
+        title="DID Reputation Settings"
+        actions={
+          <button onClick={save} disabled={!dirty || saving || loading} className="btn-purple disabled:opacity-40">
+            <Save size={15} /> {saving ? "Saving…" : "Save Settings"}
+          </button>
+        }
+      />
       <div className="p-8 space-y-8">
         <div className="card border border-[var(--color-accent)]/25 bg-[var(--color-accent-tint)] text-sm text-[var(--color-text-primary)]">
           These are the <span className="font-semibold">global defaults</span> — they apply to every campaign unless a campaign has its own override configured under{" "}
