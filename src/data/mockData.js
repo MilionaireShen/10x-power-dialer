@@ -1,10 +1,5 @@
 // Realistic placeholder data for the 10X Power Dialer demo.
 
-export const AGENT_NAMES = [
-  "Jordan Blake", "Maria Santos", "Devon Carter", "Priya Nair", "Liam O'Connor",
-  "Aisha Bello", "Ethan Wright", "Sofia Rossi", "Marcus Lee", "Grace Kim",
-  "Noah Bennett", "Chloe Dubois", "Tariq Hassan", "Emily Chen", "Ryan Walsh",
-];
 
 export function initials(name) {
   return name
@@ -15,33 +10,9 @@ export function initials(name) {
     .toUpperCase();
 }
 
-export const STATUSES = ["available", "on_call", "unready", "lunch", "break", "logged_out"];
 
-export const CURRENT_AGENT = {
-  id: "a1",
-  name: "Jordan Blake",
-  email: "jordan.blake@10xpowerdialer.com",
-  role: "agent",
-  status: "available",
-  statusSince: Date.now() - 1000 * 60 * 4,
-  avatarColor: "#5B3FE0",
-};
 
-export const CURRENT_ADMIN = {
-  id: "admin1",
-  name: "Morgan Reyes",
-  email: "morgan.reyes@10xpowerdialer.com",
-  role: "admin",
-  avatarColor: "#334155",
-};
 
-export const CURRENT_SUPER_ADMIN = {
-  id: "sa1",
-  name: "Alex Rivera",
-  email: "alex.rivera@10xpowerdialer.com",
-  role: "super_admin",
-  avatarColor: "#4830B8",
-};
 
 // Full permission catalog for the customizable Manager role — organized
 // exactly per the sections in the spec.
@@ -157,15 +128,6 @@ export const DEFAULT_MANAGER_PERMISSIONS = {
   view_knowledge_center: true,
 };
 
-export const CURRENT_MANAGER = {
-  id: "mgr1",
-  name: "Taylor Brooks",
-  email: "taylor.brooks@10xpowerdialer.com",
-  role: "manager",
-  avatarColor: "#0F766E",
-  permissions: DEFAULT_MANAGER_PERMISSIONS,
-  campaigns: ["camp-1", "camp-2", "camp-4"],
-};
 
 function seedRandom(seed) {
   let value = seed;
@@ -191,42 +153,6 @@ const STATUS_SEQUENCE = [
 const ON_CALL_SECONDS = [12, 95, 250, 420];
 let onCallCursor = 0;
 
-export const AGENTS = AGENT_NAMES.map((name, i) => {
-  const status = STATUS_SEQUENCE[i % STATUS_SEQUENCE.length];
-  let statusSince;
-  if (status === "on_call") {
-    const seconds = ON_CALL_SECONDS[onCallCursor % ON_CALL_SECONDS.length];
-    onCallCursor += 1;
-    statusSince = Date.now() - seconds * 1000;
-  } else {
-    const minutesInStatus = Math.floor(rand() * 40) + 1;
-    statusSince = Date.now() - minutesInStatus * 60 * 1000;
-  }
-  const sessionStart = Date.now() - (Math.floor(rand() * 4) + 2) * 60 * 60 * 1000;
-  const lastCallEndedAt = Date.now() - (Math.floor(rand() * 25) + 1) * 60 * 1000;
-
-  return {
-    id: `agent-${i + 1}`,
-    name,
-    status,
-    statusSince,
-    callsToday: Math.floor(rand() * 90) + 20,
-    connects: Math.floor(rand() * 40) + 5,
-    appointments: Math.floor(rand() * 12),
-    conversionRate: (rand() * 20 + 5).toFixed(1),
-    autoLogouts: Math.floor(rand() * 3),
-    campaign: ["Solar Homeowner Outreach", "Q3 Insurance Renewals", "Debt Relief Consultation", "Medicare Enrollment Blitz"][i % 4],
-    extension: String(1001 + i),
-    leadName: status === "on_call" ? LEAD_NAME_POOL[i % LEAD_NAME_POOL.length] : null,
-    leadPhone: status === "on_call" ? LEAD_PHONE_POOL[i % LEAD_PHONE_POOL.length] : null,
-    callType: i % 5 === 0 ? "Inbound" : "Outbound",
-    readySince: status === "available" ? statusSince : statusSince - (Math.floor(rand() * 20) + 5) * 60 * 1000,
-    lastCallEndedAt,
-    sessionStart,
-    queue: QUEUE_NAMES[i % QUEUE_NAMES.length],
-    list: LEAD_LIST_NAMES[i % 4],
-  };
-});
 
 export const DISPOSITIONS = [
   { key: "booked", label: "Booked Appointment", color: "#10B981" },
@@ -407,157 +333,13 @@ export const DEFAULT_CUSTOM_FIELDS = [
   { id: "cf-3", label: "Appointment Time", type: "Date", required: false },
 ];
 
-export const CURRENT_LEAD = {
-  fullName: "Patricia Alvarado",
-  phone: "(714) 555-0138",
-  email: "p.alvarado@example.com",
-  street: "412 Sunview Terrace",
-  city: "Anaheim",
-  state: "CA",
-  zip: "92805",
-  timezone: "PT · 10:42 AM local",
-  timesCalled: 3,
-  lastDisposition: "Callback",
-  notes:
-    "Spoke on 8/9 — interested in solar but wants to confirm roof warranty status with HOA first. Callback requested after 5pm.",
-  customValues: {
-    "cf-1": "9 years",
-    "cf-2": "Yes",
-    "cf-3": "",
-  },
-};
 
-export const LEAD_QUEUE_PREVIEW = [
-  { name: "Patricia Alvarado", phone: "(714) 555-0138", location: "Anaheim, CA" },
-  { name: "Kenneth Ubah", phone: "(602) 555-0119", location: "Tempe, AZ" },
-  { name: "Diane Foster", phone: "(313) 555-0187", location: "Dearborn, MI" },
-];
 
-export const CALL_SCRIPT = {
-  title: "Solar Homeowner Outreach — Opening Script",
-  intro:
-    "Hi, this is {agent_name} calling from 10X Solar Solutions — is this {lead_name}? I'm reaching out because homeowners in {location} are now qualifying for the 2026 solar rebate program before it expires.",
-  keyPoints: [
-    "Confirm they are the homeowner and decision maker",
-    "Mention the rebate deadline creates urgency without being pushy",
-    "Ask about their current average monthly electric bill",
-    "Offer a free, no-obligation savings estimate",
-  ],
-  objections: [
-    {
-      objection: "I'm not interested.",
-      response:
-        "Totally understand — most homeowners say that before they see the numbers. Can I ask, what's your average electric bill running these days?",
-    },
-    {
-      objection: "I already have solar.",
-      response:
-        "That's great! We actually work with homeowners on panel upgrades and battery storage add-ons too — worth a 2-minute look?",
-    },
-    {
-      objection: "Send me information instead.",
-      response:
-        "Happy to — I can text you a quick summary right now. While I have you, can I ask 2 quick questions so it's tailored to your home?",
-    },
-  ],
-};
 
-export const LEAD_LISTS = [
-  {
-    id: "list-1",
-    name: "CA Homeowners — Q3 Batch",
-    totalLeads: 18400,
-    health: "Fresh",
-    timesCalledThrough: 1,
-    contactRate: 34,
-    lastCalled: "2026-08-12",
-    nextAvailable: null,
-  },
-  {
-    id: "list-2",
-    name: "Renewal Book — August",
-    totalLeads: 9200,
-    health: "Tired",
-    timesCalledThrough: 5,
-    contactRate: 19,
-    lastCalled: "2026-08-11",
-    nextAvailable: null,
-  },
-  {
-    id: "list-3",
-    name: "National Consumer List 12",
-    totalLeads: 22000,
-    health: "Exhausted",
-    timesCalledThrough: 8,
-    contactRate: 8,
-    lastCalled: "2026-08-05",
-    nextAvailable: "2026-09-04",
-  },
-  {
-    id: "list-4",
-    name: "Medicare AEP Prospects",
-    totalLeads: 6100,
-    health: "Fresh",
-    timesCalledThrough: 2,
-    contactRate: 41,
-    lastCalled: "2026-08-12",
-    nextAvailable: null,
-  },
-  {
-    id: "list-5",
-    name: "Warranty Expirations — July",
-    totalLeads: 14700,
-    health: "Recycled",
-    timesCalledThrough: 1,
-    contactRate: 28,
-    lastCalled: "2026-07-02",
-    nextAvailable: null,
-  },
-];
 
-export const DNC_STATS = {
-  total: 142300,
-  autoScrub: true,
-};
 
-export const LEADERBOARD = AGENTS.map((a, i) => ({
-  rank: i + 1,
-  name: a.name,
-  calls: a.callsToday,
-  connects: a.connects,
-  appointments: a.appointments,
-  conversionRate: a.conversionRate,
-  bestStreak: Math.floor(rand() * 9) + 2,
-}))
-  .sort((a, b) => b.appointments - a.appointments || b.calls - a.calls)
-  .map((a, i) => ({ ...a, rank: i + 1 }));
 
-export const RECENT_CALLS = Array.from({ length: 24 }).map((_, i) => {
-  const agent = AGENTS[i % AGENTS.length];
-  const disposition = DISPOSITIONS[i % DISPOSITIONS.length];
-  const durationSec = Math.floor(rand() * 400) + 15;
-  const min = String(Math.floor(durationSec / 60)).padStart(2, "0");
-  const sec = String(durationSec % 60).padStart(2, "0");
-  return {
-    id: `call-${i + 1}`,
-    time: `08/${String(10 + (i % 3)).padStart(2, "0")} ${String(8 + (i % 10)).padStart(2, "0")}:${String((i * 7) % 60).padStart(2, "0")} AM`,
-    agent: agent.name,
-    lead: LEAD_QUEUE_PREVIEW[i % LEAD_QUEUE_PREVIEW.length].name,
-    phone: LEAD_QUEUE_PREVIEW[i % LEAD_QUEUE_PREVIEW.length].phone,
-    duration: `${min}:${sec}`,
-    disposition: disposition.label,
-    dispositionColor: disposition.color,
-    notes: "Homeowner confirmed roof age under 10 years, interested in estimate.",
-    campaign: CAMPAIGNS[i % CAMPAIGNS.length].name,
-  };
-});
 
-export const LIVE_CALLS = AGENTS.filter((a) => a.status === "on_call").map((a, i) => ({
-  agent: a.name,
-  lead: LEAD_QUEUE_PREVIEW[i % LEAD_QUEUE_PREVIEW.length].name,
-  duration: Math.floor((Date.now() - a.statusSince) / 1000),
-  campaign: a.campaign,
-}));
 
 // Seed data so the admin Callback Tracking table has realistic history from
 // first load, before any agent has scheduled one live.
@@ -602,46 +384,8 @@ export const SEED_CALLBACKS = [
   },
 ];
 
-export const KNOWLEDGE_CATEGORIES = [
-  { key: "getting-started", title: "Getting Started", description: "Set up your account and place your first call.", count: 8 },
-  { key: "dialing-modes", title: "Dialing Modes Explained", description: "Predictive, Power, Progressive, and Preview modes.", count: 6 },
-  { key: "lead-health", title: "Lead Lists and Health System", description: "Understand Fresh, Tired, Exhausted, and Recycled leads.", count: 5 },
-  { key: "dispositions", title: "Call Dispositions", description: "What each disposition means and when to use it.", count: 9 },
-  { key: "sms", title: "SMS and Follow-ups", description: "Automated text follow-ups for tired leads.", count: 4 },
-  { key: "reports", title: "Filters and Reports", description: "Build custom reports and export your data.", count: 7 },
-  { key: "monitoring", title: "Call Monitoring (Admin)", description: "Listen, whisper, and barge into live calls.", count: 5 },
-  { key: "leaderboard", title: "Leaderboard and KPIs", description: "How rankings and KPIs are calculated.", count: 4 },
-  { key: "campaigns", title: "Campaign Management", description: "Create, edit, and optimize campaigns.", count: 10 },
-  { key: "multi-tenant", title: "Multi-Tenant Management (Super Admin)", description: "Onboard and manage companies.", count: 6 },
-  { key: "compliance", title: "Compliance and Legal", description: "DNC rules, TCPA, and calling hour regulations.", count: 8 },
-];
 
-export const COMPANIES = [
-  { id: "co-1", name: "Sunrise Solar Partners", seatsUsed: 7, seatsTotal: 10, callsToday: 4821, campaigns: 3, status: "Active", monthlyRate: 500 },
-  { id: "co-2", name: "Apex Insurance Group", seatsUsed: 8, seatsTotal: 8, callsToday: 2210, campaigns: 2, status: "Active", monthlyRate: 500 },
-  { id: "co-3", name: "Liberty Debt Advisors", seatsUsed: 5, seatsTotal: 12, callsToday: 0, campaigns: 1, status: "Suspended", monthlyRate: 500 },
-  { id: "co-4", name: "Golden Years Medicare Co.", seatsUsed: 6, seatsTotal: 6, callsToday: 980, campaigns: 1, status: "Active", monthlyRate: 500 },
-  { id: "co-5", name: "Homeguard Warranty Services", seatsUsed: 4, seatsTotal: 10, callsToday: 0, campaigns: 1, status: "Active", monthlyRate: 500 },
-];
 
-export const SUPER_ADMIN_ALERTS = {
-  autoLogouts: [
-    { agent: "Devon Carter", company: "Sunrise Solar Partners", time: "9:41 AM", reason: "Wrap-up exceeded 65s" },
-    { agent: "Sofia Rossi", company: "Apex Insurance Group", time: "8:14 AM", reason: "Wrap-up exceeded 65s" },
-  ],
-  spamFlags: [
-    { number: "(714) 555-9021", company: "Sunrise Solar Partners" },
-    { number: "(602) 555-4471", company: "Golden Years Medicare Co." },
-  ],
-  seatLimits: [
-    { company: "Apex Insurance Group", used: 8, total: 8 },
-    { company: "Golden Years Medicare Co.", used: 6, total: 6 },
-  ],
-  missedInbound: [
-    { company: "Liberty Debt Advisors", count: 4 },
-    { company: "Homeguard Warranty Services", count: 2 },
-  ],
-};
 
 const ROLE_DESCRIPTIONS = {
   agent: "Fixed permissions — can only dial their own assigned campaigns and see their own stats.",
@@ -672,52 +416,6 @@ export function seedLoginHistory(name, count = 3) {
   }));
 }
 
-export const USERS = [
-  {
-    id: "u-admin",
-    firstName: "Morgan",
-    lastName: "Reyes",
-    email: CURRENT_ADMIN.email,
-    role: "admin",
-    status: "Active",
-    lastLogin: Date.now() - 1000 * 60 * 22,
-    campaigns: [],
-  },
-  {
-    id: "u-superadmin",
-    firstName: "Alex",
-    lastName: "Rivera",
-    email: CURRENT_SUPER_ADMIN.email,
-    role: "super_admin",
-    status: "Active",
-    lastLogin: Date.now() - 1000 * 60 * 8,
-    campaigns: [],
-  },
-  {
-    id: "u-manager",
-    firstName: "Taylor",
-    lastName: "Brooks",
-    email: CURRENT_MANAGER.email,
-    role: "manager",
-    status: "Active",
-    lastLogin: Date.now() - 1000 * 60 * 45,
-    campaigns: CURRENT_MANAGER.campaigns,
-    permissions: CURRENT_MANAGER.permissions,
-  },
-  ...AGENT_NAMES.map((name, i) => {
-    const [firstName, ...rest] = name.split(" ");
-    return {
-      id: `u-agent-${i + 1}`,
-      firstName,
-      lastName: rest.join(" "),
-      email: `${name.toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, ".")}@10xpowerdialer.com`,
-      role: "agent",
-      status: i === 7 ? "Inactive" : "Active",
-      lastLogin: Date.now() - (Math.floor(rand() * 20) + 1) * 1000 * 60 * 60,
-      campaigns: CAMPAIGNS.filter((c) => c.assignedAgentNames?.includes(name)).map((c) => c.id),
-    };
-  }),
-];
 
 // ---------------------------------------------------------------------------
 // Data backing the restructured admin navigation (Reports / Campaigns /
@@ -734,54 +432,7 @@ const LEAD_CITIES = [
   { city: "Tampa", state: "FL" },
 ];
 
-export const LEADS = Array.from({ length: 20 }).map((_, i) => {
-  const list = LEAD_LISTS[i % LEAD_LISTS.length];
-  const loc = LEAD_CITIES[i % LEAD_CITIES.length];
-  const disposition = DISPOSITIONS[i % DISPOSITIONS.length];
-  return {
-    id: `lead-${i + 1}`,
-    name: `${LEAD_FIRST[i % LEAD_FIRST.length]} ${LEAD_LAST[(i * 3) % LEAD_LAST.length]}`,
-    phone: `(${200 + i}) 555-0${100 + i}`,
-    city: loc.city,
-    state: loc.state,
-    list: list.name,
-    lastDisposition: disposition.label,
-    lastDispositionColor: disposition.color,
-    timesCalled: 1 + (i % 5),
-  };
-});
 
-export const SCRIPTS = [
-  { id: "script-1", name: "Solar Homeowner Outreach — Opening Script", campaignId: "camp-1", ...CALL_SCRIPT },
-  {
-    id: "script-2",
-    name: "Insurance Renewal — Retention Script",
-    campaignId: "camp-2",
-    title: "Q3 Insurance Renewals — Retention Script",
-    intro:
-      "Hi, this is {agent_name} with your insurance renewal team — is this {lead_name}? Your policy renewal is coming up and I wanted to make sure you're getting the best rate available in {location}.",
-    keyPoints: [
-      "Confirm current policy is still active",
-      "Ask about any life changes affecting coverage needs",
-      "Offer a free rate comparison",
-    ],
-    objections: [
-      { objection: "I'm happy with my current plan.", response: "Great to hear — would it hurt to compare and confirm you're still getting the best rate?" },
-    ],
-  },
-  {
-    id: "script-3",
-    name: "Debt Relief Consultation — Opening Script",
-    campaignId: "camp-3",
-    title: "Debt Relief Consultation — Opening Script",
-    intro:
-      "Hi, this is {agent_name} calling about debt relief options available in {location} — is this {lead_name}? Many residents are qualifying for reduced payment programs this quarter.",
-    keyPoints: ["Confirm total unsecured debt range", "Explain the free consultation offer", "Set expectations for next steps"],
-    objections: [
-      { objection: "I don't have debt problems.", response: "Understood — this is really just a free financial check-in, no obligation at all." },
-    ],
-  },
-];
 
 
 // Builds a short seeded score-history trail (used by the DID reputation
@@ -1090,5 +741,4 @@ export const DEFAULT_ADMIN_SETTINGS = {
     leadListUploaded: false,
     spamFlagged: true,
   },
-  billing: { seatsUsed: AGENT_NAMES.length, seatsTotal: 20, monthlyRatePerSeat: 500, nextInvoiceDate: "2026-09-01" },
 };

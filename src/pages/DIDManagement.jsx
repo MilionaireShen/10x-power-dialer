@@ -157,13 +157,16 @@ export default function DIDManagement() {
         onClose={() => setAssignTarget(null)}
         onSave={(campaignId) => {
           didService
-            .assignCampaign(assignTarget.id, campaignId || null)
+            .assignCampaign(assignTarget.id, { campaign_id: campaignId || null })
             .then(() => {
               notify(`${assignTarget.phoneNumber} reassigned.`, "success");
               setAssignTarget(null);
               loadDids();
             })
-            .catch((err) => notify(err?.message || "Could not reassign this number.", "error"));
+            // The server explains why an assignment is refused (an
+            // outbound-only campaign, for instance) — shown rather than
+            // replaced with a generic failure.
+            .catch((err) => notify(err?.response?.data?.message || err?.message || "Could not reassign this number.", "error"));
         }}
       />
 

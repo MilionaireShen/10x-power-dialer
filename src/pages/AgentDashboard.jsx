@@ -13,7 +13,7 @@ import CallbackPopup from "../components/CallbackPopup";
 import AvailabilityPanel from "../components/AvailabilityPanel";
 import HotkeyBar from "../components/HotkeyBar";
 import SessionEndedOverlay from "../components/SessionEndedOverlay";
-import { DISPOSITIONS } from "../data/mockData";
+import dispositionService from "../services/dispositionService";
 import { formatDuration, wrapUpVisual, getStatusVisual } from "../lib/statusColors";
 import { openPropertyOnMap } from "../lib/googleMaps";
 import { extractAreaCode } from "../lib/didReputationEngine";
@@ -209,6 +209,21 @@ export default function AgentDashboard() {
   const [wrapSeconds, setWrapSeconds] = useState(0);
   const [disposition, setDisposition] = useState(null);
   const [notes, setNotes] = useState("");
+
+  // The dispositions an agent may pick, from the database. Admins add and
+  // rename these, so a fixed list in the frontend would drift from what the
+  // reports are actually grouped by.
+  const [dispositions, setDispositions] = useState([]);
+  useEffect(() => {
+    dispositionService
+      .list()
+      .then((res) => setDispositions((res?.data || []).map((d) => ({
+        key: d.name,
+        label: d.label || d.name,
+        color: d.color || "#6B7280",
+      }))))
+      .catch(() => setDispositions([]));
+  }, []);
 
   const [lead, setLead] = useState(buildEmptyLead);
   // The backend call row for the call in progress, so an appointment booked
@@ -571,7 +586,7 @@ export default function AgentDashboard() {
       });
     }
     if (isManualCall) {
-      const dispositionInfo = DISPOSITIONS.find((d) => d.key === dispositionKey);
+      const dispositionInfo = dispositions.find((d) => d.key === dispositionKey);
       logManualDialCall({
         agentName: user.name,
         leadName: lead.fullName,
@@ -582,7 +597,7 @@ export default function AgentDashboard() {
         campaign: campaign?.name,
       });
     }
-    notify(`Call logged as "${DISPOSITIONS.find((d) => d.key === dispositionKey)?.label}".`, "success", {
+    notify(`Call logged as "${dispositions.find((d) => d.key === dispositionKey)?.label}".`, "success", {
       title: "Disposition Submitted",
     });
     setCallState("waiting");
@@ -1119,13 +1134,29 @@ function WrapupState({
       <div className="card">
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Disposition</h3>
 
-        <DispositionButton d={DISPOSITIONS[0]} selected={disposition === DISPOSITIONS[0].key} onClick={() => setDisposition(DISPOSITIONS[0].key)} large />
+        {/* Loaded from the database, so this can legitimately be empty for a
+            moment on load, or permanently if nobody has configured any. The
+            agent is told which, rather than shown a broken panel. */}
+        {dispositions.length === 0 ? (
+          <p className="py-3 text-sm text-[var(--color-text-tertiary)]">
+            No dispositions have been configured. An admin can add them under Campaigns → Disposition.
+          </p>
+        ) : (
+          <>
+            <DispositionButton
+              d={dispositions[0]}
+              selected={disposition === dispositions[0].key}
+              onClick={() => setDisposition(dispositions[0].key)}
+              large
+            />
 
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          {DISPOSITIONS.slice(1).map((d) => (
-            <DispositionButton key={d.key} d={d} selected={disposition === d.key} onClick={() => setDisposition(d.key)} />
-          ))}
-        </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {dispositions.slice(1).map((d) => (
+                <DispositionButton key={d.key} d={d} selected={disposition === d.key} onClick={() => setDisposition(d.key)} />
+              ))}
+            </div>
+          </>
+        )}
 
         {disposition === "callback" && !scheduledCallbackAt && (
           <div className="mt-3">

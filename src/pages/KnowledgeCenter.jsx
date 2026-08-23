@@ -1,163 +1,175 @@
-import { useMemo, useState } from "react";
-import {
-  Search,
-  Rocket,
-  Phone,
-  ListChecks,
-  Tag,
-  MessageSquare,
-  BarChart3,
-  Headphones,
-  Trophy,
-  FolderKanban,
-  Building2,
-  Scale,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Search, BookOpen } from "lucide-react";
 import PageHeader from "../components/PageHeader";
-import { KNOWLEDGE_CATEGORIES } from "../data/mockData";
+import EmptyState from "../components/EmptyState";
+import { useToast } from "../lib/ToastContext";
+import api from "../services/api";
 
-const ICON_MAP = {
-  "getting-started": Rocket,
-  "dialing-modes": Phone,
-  "lead-health": ListChecks,
-  dispositions: Tag,
-  sms: MessageSquare,
-  reports: BarChart3,
-  monitoring: Headphones,
-  leaderboard: Trophy,
-  campaigns: FolderKanban,
-  "multi-tenant": Building2,
-  compliance: Scale,
-};
+// Help articles come from the knowledge_base table. The screen previously
+// showed a fixed set of categories with invented article counts and served the
+// same three paragraphs whichever article was opened — so every article looked
+// written when none were.
 
-function articlesFor(category) {
-  return Array.from({ length: category.count }).map((_, i) => ({
-    id: `${category.key}-${i + 1}`,
-    title: `${category.title} — Part ${i + 1}`,
-    minutes: 2 + ((i * 3) % 6),
-  }));
+function categoryLabel(key) {
+  return String(key || "")
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const ARTICLE_BODY = [
-  "10X Power Dialer is designed so any agent can be productive within minutes — no lengthy onboarding required.",
-  "Every screen follows the same visual language: a single accent color, clear status indicators, and legible controls.",
-  "When in doubt, the color of a status pill always tells you what's happening — blue means ready, green means on a call, and red tones mean attention is needed.",
-];
+function readingMinutes(content) {
+  const words = String(content || "").trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.round(words / 200));
+}
 
 export default function KnowledgeCenter() {
+  const { notify } = useToast();
+  const [articles, setArticles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(null);
   const [article, setArticle] = useState(null);
 
-  const filtered = useMemo(() => {
-    if (!search.trim()) return KNOWLEDGE_CATEGORIES;
+  useEffect(() => {
+    api.get("/admin/knowledge")
+      .then((r) => setArticles(r.data?.data?.articles || []))
+      .catch((err) => {
+        const message = err?.response?.data?.message || "Could not load help articles.";
+        setError(message);
+        notify(message, "error");
+      })
+      .finally(() => setLoading(false));
+  }, [notify]);
+
+  // Categories are whatever the articles are filed under, so an empty library
+  // shows no categories rather than a wall of empty tiles.
+  const categories = useMemo(() => {
+    const byKey = {};
+    for (const a of articles) {
+      byKey[a.category] = byKey[a.category] || { key: a.category, count: 0 };
+      byKey[a.category].count += 1;
+    }
+    return Object.values(byKey).sort((a, b) => a.key.localeCompare(b.key));
+  }, [articles]);
+
+  const matches = useMemo(() => {
+    if (!search.trim()) return null;
     const q = search.toLowerCase();
-    return KNOWLEDGE_CATEGORIES.filter(
-      (c) => c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
+    return articles.filter(
+      (a) => a.title.toLowerCase().includes(q) || String(a.content || "").toLowerCase().includes(q),
     );
-  }, [search]);
+  }, [search, articles]);
+
+  const inCategory = category ? articles.filter((a) => a.category === category.key) : [];
 
   return (
     <div>
       <PageHeader title="Knowledge Center" subtitle="Answers for every screen in 10X Power Dialer" />
 
-      <div className="p-8 space-y-6">
+      <div className="space-y-6 p-8">
         <div className="relative">
           <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]" />
           <input
             value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setCategory(null);
-              setArticle(null);
-            }}
+            onChange={(e) => { setSearch(e.target.value); setCategory(null); setArticle(null); }}
             placeholder="Search for help…"
-            className="input-field pl-11 py-3 text-base"
+            className="input-field py-3 pl-11 text-base"
           />
         </div>
 
         <Breadcrumbs
           category={category}
           article={article}
-          onHome={() => {
-            setCategory(null);
-            setArticle(null);
-          }}
+          onHome={() => { setCategory(null); setArticle(null); }}
           onCategory={() => setArticle(null)}
         />
 
-        {!category && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((c) => {
-              const Icon = ICON_MAP[c.key];
-              return (
-                <button
-                  key={c.key}
-                  onClick={() => setCategory(c)}
-                  className="card text-left transition-colors duration-150 hover:border-[var(--color-accent)]/40"
-                >
-                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-accent-tint)]">
-                    <Icon size={18} className="text-[var(--color-accent)]" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{c.title}</h3>
-                  <p className="mt-1 text-xs text-[var(--color-text-secondary)]">{c.description}</p>
-                  <p className="mt-3 text-[11px] font-medium text-[var(--color-accent)]">{c.count} articles</p>
-                </button>
-              );
-            })}
-            {filtered.length === 0 && (
-              <p className="col-span-full py-10 text-center text-[var(--color-text-tertiary)]">No results for &ldquo;{search}&rdquo;.</p>
-            )}
-          </div>
-        )}
-
-        {category && !article && (
+        {loading ? (
+          <p className="text-sm text-[var(--color-text-tertiary)]">Loading…</p>
+        ) : error ? (
+          <EmptyState icon={BookOpen} title="Could not load help articles" description={error} />
+        ) : articles.length === 0 ? (
+          <EmptyState
+            icon={BookOpen}
+            title="No help articles yet"
+            description="Articles published to the knowledge base appear here."
+          />
+        ) : matches ? (
+          matches.length === 0 ? (
+            <p className="py-10 text-center text-[var(--color-text-tertiary)]">No results for &ldquo;{search}&rdquo;.</p>
+          ) : (
+            <div className="card divide-y divide-[var(--color-border)] p-0">
+              {matches.map((a) => (
+                <ArticleRow key={a.id} article={a} onOpen={() => {
+                  setCategory({ key: a.category, title: categoryLabel(a.category) });
+                  setArticle(a);
+                  setSearch("");
+                }} />
+              ))}
+            </div>
+          )
+        ) : article ? (
+          <article className="card max-w-2xl">
+            <h1 className="text-xl font-bold text-[var(--color-text-primary)]">{article.title}</h1>
+            <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+              {readingMinutes(article.content)} min read · {categoryLabel(article.category)}
+            </p>
+            <div className="mt-5 space-y-4 whitespace-pre-wrap text-sm leading-relaxed text-[var(--color-text-secondary)]">
+              {article.content}
+            </div>
+          </article>
+        ) : category ? (
           <div className="card divide-y divide-[var(--color-border)] p-0">
-            {articlesFor(category).map((a) => (
+            {inCategory.map((a) => (
+              <ArticleRow key={a.id} article={a} onOpen={() => setArticle(a)} />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {categories.map((c) => (
               <button
-                key={a.id}
-                onClick={() => setArticle(a)}
-                className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-[var(--color-bg)]"
+                key={c.key}
+                onClick={() => setCategory({ key: c.key, title: categoryLabel(c.key) })}
+                className="card text-left transition-colors duration-150 hover:border-[var(--color-accent)]/40"
               >
-                <span className="text-sm text-[var(--color-text-primary)]">{a.title}</span>
-                <span className="text-xs text-[var(--color-text-tertiary)]">{a.minutes} min read</span>
+                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-accent-tint)]">
+                  <BookOpen size={18} className="text-[var(--color-accent)]" />
+                </div>
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{categoryLabel(c.key)}</h3>
+                <p className="mt-3 text-[11px] font-medium text-[var(--color-accent)]">
+                  {c.count} article{c.count === 1 ? "" : "s"}
+                </p>
               </button>
             ))}
           </div>
-        )}
-
-        {article && (
-          <article className="card max-w-2xl">
-            <h1 className="text-xl font-bold text-[var(--color-text-primary)]">{article.title}</h1>
-            <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">{article.minutes} min read · {category.title}</p>
-            <div className="mt-5 space-y-4 text-sm leading-relaxed text-[var(--color-text-secondary)]">
-              {ARTICLE_BODY.map((p, i) => (
-                <p key={i}>{p}</p>
-              ))}
-              <h2 className="pt-2 text-base font-semibold text-[var(--color-text-primary)]">Key takeaways</h2>
-              <ul className="list-disc space-y-1.5 pl-5">
-                <li>Status colors update automatically — no manual refresh needed.</li>
-                <li>Wrap-up time is fully configurable per campaign by an admin.</li>
-                <li>Every action that affects your team is logged for reporting.</li>
-              </ul>
-            </div>
-          </article>
         )}
       </div>
     </div>
   );
 }
 
+function ArticleRow({ article, onOpen }) {
+  return (
+    <button
+      onClick={onOpen}
+      className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-[var(--color-bg)]"
+    >
+      <span className="text-sm text-[var(--color-text-primary)]">{article.title}</span>
+      <span className="text-xs text-[var(--color-text-tertiary)]">{readingMinutes(article.content)} min read</span>
+    </button>
+  );
+}
+
 function Breadcrumbs({ category, article, onHome, onCategory }) {
   return (
     <div className="flex items-center gap-2 text-xs text-[var(--color-text-tertiary)]">
-      <button onClick={onHome} className="hover:text-[var(--color-text-primary)] transition-colors">
+      <button onClick={onHome} className="transition-colors hover:text-[var(--color-text-primary)]">
         Knowledge Center
       </button>
       {category && (
         <>
           <span>/</span>
-          <button onClick={onCategory} className="hover:text-[var(--color-text-primary)] transition-colors">
+          <button onClick={onCategory} className="transition-colors hover:text-[var(--color-text-primary)]">
             {category.title}
           </button>
         </>

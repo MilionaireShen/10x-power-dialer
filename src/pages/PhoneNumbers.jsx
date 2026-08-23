@@ -1,38 +1,73 @@
-import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Plus, ShieldAlert } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Plus, ShieldAlert, Phone } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
-import SidePanel from "../components/SidePanel";
-import { useAppData } from "../lib/AppDataContext";
+import EmptyState from "../components/EmptyState";
 import { useToast } from "../lib/ToastContext";
+import didService from "../services/didService";
+import campaignService from "../services/campaignService";
+
+// The numbers actually on the Telnyx account and in the dids table. Adding one
+// means buying it, which happens through the backend — the browser never holds
+// the Telnyx key.
+
+const STATUS_TONE = {
+  active: ["var(--color-success-tint)", "var(--color-success)"],
+  assigned: ["var(--color-success-tint)", "var(--color-success)"],
+  resting: ["var(--color-warning-tint)", "var(--color-warning)"],
+  released: ["var(--color-bg)", "var(--color-text-tertiary)"],
+};
 
 export default function PhoneNumbers() {
-  const { phoneNumbers, campaigns, addPhoneNumber, updatePhoneNumber } = useAppData();
   const { notify } = useToast();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [addOpen, setAddOpen] = useState(false);
-  const [newNumber, setNewNumber] = useState("");
-  const [newCampaign, setNewCampaign] = useState("");
+  const [dids, setDids] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);
 
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [d, c] = await Promise.all([didService.list(), campaignService.list()]);
+      setDids(d?.data || []);
+      setCampaigns(c?.data || []);
+    } catch (err) {
+      const message = err?.response?.data?.message || "Could not load phone numbers.";
+      setError(message);
+      notify(message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [notify]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Buying a number is its own flow, on the DID management screen.
   useEffect(() => {
     if (searchParams.get("add") === "1") {
-      setAddOpen(true);
       const next = new URLSearchParams(searchParams);
       next.delete("add");
       setSearchParams(next, { replace: true });
+      navigate("/admin/phone-system/did-management");
     }
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, navigate]);
 
-  const save = () => {
-    if (!newNumber.trim()) {
-      notify("Enter a phone number first.", "warning");
-      return;
+  const assign = async (did, campaignId) => {
+    setBusy(did.id);
+    try {
+      await didService.assignCampaign(did.id, { campaign_id: campaignId || null });
+      notify(`${did.phone_number} reassigned.`, "success");
+      load();
+    } catch (err) {
+      // The server refuses some pairings and says why — an inbound-enabled
+      // number pointed at an outbound-only campaign, for instance.
+      notify(err?.response?.data?.message || "Could not reassign this number.", "error");
+    } finally {
+      setBusy(null);
     }
-    addPhoneNumber({ number: newNumber, campaignId: newCampaign || null });
-    notify(`${newNumber} added.`, "success");
-    setNewNumber("");
-    setNewCampaign("");
-    setAddOpen(false);
   };
 
   return (
@@ -41,98 +76,82 @@ export default function PhoneNumbers() {
         category="Phone System"
         title="Phone Numbers"
         actions={
-          <button onClick={() => setAddOpen(true)} className="btn-purple">
+          <button onClick={() => navigate("/admin/phone-system/did-management")} className="btn-purple">
             <Plus size={15} /> Add Number
           </button>
         }
       />
       <div className="p-8">
         <div className="card overflow-x-auto p-0">
-          <table className="w-full min-w-[800px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-[var(--color-border)] text-xs uppercase tracking-wide text-[var(--color-text-tertiary)]">
-                <th className="px-5 py-3 font-medium">Number</th>
-                <th className="px-5 py-3 font-medium">Status</th>
-                <th className="px-5 py-3 font-medium">Campaign</th>
-                <th className="px-5 py-3 font-medium">Recording</th>
-                <th className="px-5 py-3 font-medium">Spam Flag</th>
-              </tr>
-            </thead>
-            <tbody>
-              {phoneNumbers.map((n, i) => (
-                <tr key={n.id} className={`border-b border-[var(--color-border)] last:border-0 ${i % 2 ? "bg-[var(--color-bg)]" : ""}`}>
-                  <td className="px-5 py-3.5 font-medium text-[var(--color-text-primary)]">{n.number}</td>
-                  <td className="px-5 py-3.5">
-                    <span
-                      className="pill"
-                      style={{
-                        backgroundColor: n.status === "Active" ? "var(--color-success-tint)" : "var(--color-bg)",
-                        color: n.status === "Active" ? "var(--color-success)" : "var(--color-text-tertiary)",
-                      }}
-                    >
-                      {n.status}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <select
-                      value={n.campaignId ?? ""}
-                      onChange={(e) => updatePhoneNumber(n.id, { campaignId: e.target.value || null })}
-                      className="input-field w-auto"
-                    >
-                      <option value="">Unassigned</option>
-                      {campaigns.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <button
-                      onClick={() => updatePhoneNumber(n.id, { recordingEnabled: !n.recordingEnabled })}
-                      className={`h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${n.recordingEnabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}
-                    >
-                      <span className={`block h-4 w-4 translate-x-0.5 rounded-full bg-white transition-transform duration-200 ${n.recordingEnabled ? "translate-x-4" : ""}`} />
-                    </button>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    {n.spamFlag ? (
-                      <span className="pill bg-[var(--color-danger-tint)] text-[var(--color-danger)]">
-                        <ShieldAlert size={11} className="mr-1 inline" /> Flagged
-                      </span>
-                    ) : (
-                      <span className="text-[var(--color-text-tertiary)]">—</span>
-                    )}
-                  </td>
+          {loading ? (
+            <p className="p-8 text-sm text-[var(--color-text-tertiary)]">Loading…</p>
+          ) : error ? (
+            <div className="p-8"><EmptyState icon={Phone} title="Could not load phone numbers" description={error} /></div>
+          ) : dids.length === 0 ? (
+            <div className="p-8">
+              <EmptyState
+                icon={Phone}
+                title="No DIDs configured"
+                description="Buy a number under DID Management and it appears here."
+              />
+            </div>
+          ) : (
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-[var(--color-border)] text-xs uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                  <th className="px-5 py-3 font-medium">Number</th>
+                  <th className="px-5 py-3 font-medium">Location</th>
+                  <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Campaign</th>
+                  <th className="px-5 py-3 font-medium">Health</th>
+                  <th className="px-5 py-3 font-medium">Monthly</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {dids.map((n, i) => {
+                  const tone = STATUS_TONE[n.status] || STATUS_TONE.released;
+                  const score = n.health_score ?? null;
+                  return (
+                    <tr key={n.id} className={`border-b border-[var(--color-border)] last:border-0 ${i % 2 ? "bg-[var(--color-bg)]" : ""}`}>
+                      <td className="px-5 py-3.5 font-mono text-xs font-medium text-[var(--color-text-primary)]">{n.phone_number}</td>
+                      <td className="px-5 py-3.5 text-[var(--color-text-secondary)]">
+                        {[n.city, n.state].filter(Boolean).join(", ") || "—"}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="pill" style={{ backgroundColor: tone[0], color: tone[1] }}>{n.status}</span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <select
+                          value={n.campaign_id ?? ""}
+                          onChange={(e) => assign(n, e.target.value)}
+                          disabled={busy === n.id}
+                          className="input-field w-auto disabled:opacity-50"
+                        >
+                          <option value="">Unassigned</option>
+                          {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        {score === null ? (
+                          <span className="text-xs text-[var(--color-text-tertiary)]">—</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-sm text-[var(--color-text-secondary)]">
+                            {score < 60 && <ShieldAlert size={13} className="text-[var(--color-danger)]" />}
+                            {score}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3.5 text-[var(--color-text-secondary)]">
+                        {n.monthly_cost ? `$${Number(n.monthly_cost).toFixed(2)}` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
-
-      <SidePanel open={addOpen} onClose={() => setAddOpen(false)} title="Add Phone Number" subtitle="Provision a new outbound number">
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Phone Number</label>
-            <input value={newNumber} onChange={(e) => setNewNumber(e.target.value)} placeholder="(888) 555-0100" className="input-field" />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Assign to Campaign</label>
-            <select value={newCampaign} onChange={(e) => setNewCampaign(e.target.value)} className="input-field">
-              <option value="">Unassigned</option>
-              {campaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button onClick={save} className="btn-purple w-full">
-            Add Number
-          </button>
-        </div>
-      </SidePanel>
     </div>
   );
 }

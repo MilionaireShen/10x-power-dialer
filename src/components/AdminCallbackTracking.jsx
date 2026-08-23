@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { useAppData } from "../lib/AppDataContext";
-import { AGENT_NAMES } from "../data/mockData";
 
 const STATUS_COLOR = {
   Pending: "var(--color-info)",
@@ -12,6 +11,13 @@ const STATUS_COLOR = {
 export default function AdminCallbackTracking() {
   const { callbacks } = useAppData();
   const [agentFilter, setAgentFilter] = useState("All Agents");
+
+  // Drawn from the callbacks themselves, so the filter can only offer agents
+  // who actually appear in the list below.
+  const agentNames = useMemo(
+    () => [...new Set(callbacks.map((c) => c.agentName).filter(Boolean))].sort(),
+    [callbacks]
+  );
   const [statusFilter, setStatusFilter] = useState("All Statuses");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -32,7 +38,7 @@ export default function AdminCallbackTracking() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)} className="input-field">
             <option>All Agents</option>
-            {AGENT_NAMES.map((n) => (
+            {agentNames.map((n) => (
               <option key={n}>{n}</option>
             ))}
           </select>

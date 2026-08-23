@@ -16,7 +16,9 @@ const didService = {
   // fixes up the dids table to match (inserts anything missing, corrects
   // a mismatched telnyx_number_id).
   sync: () => api.post("/dids/sync").then((r) => r.data),
-  assignCampaign: (didId, campaignId) => api.post(`/dids/${didId}/assign-campaign`, { campaign_id: campaignId }).then((r) => r.data),
+  // The route is /assign — /assign-campaign was never implemented, so this
+  // call had always 404`d.
+  assignCampaign: (didId, payload) => api.post(`/dids/${didId}/assign`, payload).then((r) => r.data),
   deactivate: (didId) => api.post(`/dids/${didId}/deactivate`).then((r) => r.data),
 };
 

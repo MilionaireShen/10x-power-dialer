@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, AlertTriangle, GripVertical } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import { useAppData } from "../lib/AppDataContext";
+import userService from "../services/userService";
 import { useToast } from "../lib/ToastContext";
 
 const WEIGHT_LABELS = {
@@ -26,7 +27,11 @@ const METHOD_OPTIONS = ["email", "in-app", "both"];
 const METHOD_LABEL = { email: "Email", "in-app": "In-App", both: "Email + In-App" };
 
 export default function DIDReputationSettings() {
-  const { didSettings, updateDidSettings, users } = useAppData();
+  const { didSettings, updateDidSettings } = useAppData();
+  const [users, setUsers] = useState([]);
+  useEffect(() => {
+    userService.list().then((r) => setUsers(r?.data || [])).catch(() => setUsers([]));
+  }, []);
   const { notify } = useToast();
 
   const weightTotal = Object.values(didSettings.weights).reduce((a, b) => a + b, 0);

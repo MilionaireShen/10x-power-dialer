@@ -1,21 +1,54 @@
-import { useEffect, useState } from "react";
-import { Headphones, Radio, LogIn, PhoneCall } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { PhoneCall, ArrowDownLeft, ArrowUpRight, RefreshCw } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
-import Avatar from "../components/Avatar";
-import { AGENTS } from "../data/mockData";
-import { secondsSince, formatHMS } from "../lib/statusColors";
-import { useAgentActions } from "../lib/useAgentActions";
+import EmptyState from "../components/EmptyState";
+import { useToast } from "../lib/ToastContext";
+import { formatDuration } from "../lib/statusColors";
+import adminService from "../services/adminService";
+
+const STATUS_LABEL = {
+  initiated: "Dialling",
+  ringing: "Ringing",
+  answered: "Connected",
+  queued: "In queue",
+};
 
 export default function CallCenterLiveCalls() {
-  const { handleMonitor, panels } = useAgentActions();
-  const [, setTick] = useState(0);
+  const { notify } = useToast();
+  const [calls, setCalls] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [now, setNow] = useState(Date.now());
 
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 5000);
-    return () => clearInterval(id);
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await adminService.liveCalls();
+      setCalls(res?.data?.calls || []);
+    } catch (err) {
+      const message = err?.response?.data?.message || "Could not load live calls.";
+      setError(message);
+      setCalls([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const liveCalls = AGENTS.filter((a) => a.status === "on_call");
+  useEffect(() => { load(); }, [load]);
+
+  // Calls start and end constantly, so this board has to keep up. Polled
+  // rather than pushed, because the app has no realtime transport and adding
+  // one for a screen somebody watches for a few minutes is not worth it.
+  useEffect(() => {
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  // The timer ticks locally between polls so the durations do not jump.
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   return (
     <div>
@@ -23,71 +56,78 @@ export default function CallCenterLiveCalls() {
         category="Call Center"
         title="Live Calls"
         actions={
-          <span className="pill bg-[var(--color-success-tint)] text-[var(--color-success)]">
-            {liveCalls.length} calls in progress
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="pill bg-[var(--color-success-tint)] text-[var(--color-success)]">
+              {calls.length} in progress
+            </span>
+            <button onClick={load} className="btn-outline py-1.5 text-sm">
+              <RefreshCw size={14} /> Refresh
+            </button>
+          </div>
         }
       />
       <div className="p-8">
-        <div className="card overflow-hidden p-0">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-[var(--color-border)] text-xs uppercase tracking-wide text-[var(--color-text-tertiary)]">
-                <th className="px-5 py-3 font-medium">Agent</th>
-                <th className="px-5 py-3 font-medium">Lead Name</th>
-                <th className="px-5 py-3 font-medium">Phone</th>
-                <th className="px-5 py-3 font-medium">Campaign</th>
-                <th className="px-5 py-3 font-medium">Call Type</th>
-                <th className="px-5 py-3 font-medium">Duration</th>
-                <th className="px-5 py-3 font-medium">Monitor</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
-              {liveCalls.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-5 py-10 text-center text-sm text-[var(--color-text-tertiary)]">
-                    No calls in progress right now.
-                  </td>
+        <div className="card overflow-x-auto p-0">
+          {loading ? (
+            <p className="p-8 text-sm text-[var(--color-text-tertiary)]">Loading…</p>
+          ) : error ? (
+            <div className="p-8"><EmptyState icon={PhoneCall} title="Could not load live calls" description={error} /></div>
+          ) : calls.length === 0 ? (
+            <div className="p-8">
+              <EmptyState
+                icon={PhoneCall}
+                title="No calls in progress"
+                description="Active calls appear here the moment an agent connects."
+              />
+            </div>
+          ) : (
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-[var(--color-border)] text-xs uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                  <th className="px-5 py-3 font-medium">Agent</th>
+                  <th className="px-5 py-3 font-medium">Campaign</th>
+                  <th className="px-5 py-3 font-medium">Contact</th>
+                  <th className="px-5 py-3 font-medium">Number</th>
+                  <th className="px-5 py-3 font-medium">Direction</th>
+                  <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Duration</th>
                 </tr>
-              )}
-              {liveCalls.map((a) => (
-                <tr key={a.id} className="hover:bg-[var(--color-bg)]">
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={a.name} size={26} />
-                      <span className="font-medium text-[var(--color-text-primary)]">{a.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-5 py-3 text-[var(--color-text-primary)]">{a.leadName ?? "—"}</td>
-                  <td className="px-5 py-3 text-[var(--color-text-secondary)]">{a.leadPhone ?? "—"}</td>
-                  <td className="px-5 py-3 text-[var(--color-text-secondary)]">{a.campaign}</td>
-                  <td className="px-5 py-3">
-                    <span className="pill text-[11px]">
-                      <PhoneCall size={11} className="mr-1 inline" />
-                      {a.callType}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 font-mono text-[var(--color-text-primary)]">{formatHMS(secondsSince(a.statusSince))}</td>
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => handleMonitor(a, "listen")} title="Listen" className="rounded-md p-1.5 text-[var(--color-text-tertiary)] hover:bg-[var(--color-accent-tint)] hover:text-[var(--color-accent)]">
-                        <Headphones size={14} />
-                      </button>
-                      <button onClick={() => handleMonitor(a, "whisper")} title="Whisper" className="rounded-md p-1.5 text-[var(--color-text-tertiary)] hover:bg-[var(--color-accent-tint)] hover:text-[var(--color-accent)]">
-                        <Radio size={14} />
-                      </button>
-                      <button onClick={() => handleMonitor(a, "barge")} title="Barge" className="rounded-md p-1.5 text-[var(--color-text-tertiary)] hover:bg-[var(--color-accent-tint)] hover:text-[var(--color-accent)]">
-                        <LogIn size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {calls.map((c, i) => {
+                  // Counted from the answer where there is one — time spent
+                  // ringing is not talk time.
+                  const started = new Date(c.answered_at || c.started_at).getTime();
+                  const seconds = Math.max(0, Math.floor((now - started) / 1000));
+                  return (
+                    <tr key={c.id} className={`border-b border-[var(--color-border)] last:border-0 ${i % 2 ? "bg-[var(--color-bg)]" : ""}`}>
+                      <td className="px-5 py-3.5 font-medium text-[var(--color-text-primary)]">{c.agent_name || "—"}</td>
+                      <td className="px-5 py-3.5 text-[var(--color-text-secondary)]">{c.campaign_name || "—"}</td>
+                      <td className="px-5 py-3.5 text-[var(--color-text-secondary)]">{c.lead_name || "—"}</td>
+                      <td className="whitespace-nowrap px-5 py-3.5 font-mono text-xs text-[var(--color-text-tertiary)]">
+                        {c.direction === "inbound" ? c.phone_number_from : c.phone_number_called}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="inline-flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
+                          {c.direction === "inbound"
+                            ? <><ArrowDownLeft size={12} className="text-[var(--color-accent)]" /> Inbound</>
+                            : <><ArrowUpRight size={12} className="text-[var(--color-text-tertiary)]" /> Outbound</>}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="pill bg-[var(--color-bg)] text-[var(--color-text-secondary)]">
+                          {STATUS_LABEL[c.status] || c.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 font-mono text-[var(--color-text-secondary)]">{formatDuration(seconds)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
-      {panels}
     </div>
   );
 }

@@ -1,132 +1,186 @@
-import { useEffect, useRef, useState } from "react";
-import { Lock, Plus, Trash2, GripVertical } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Lock, Plus, Trash2 } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
-import { DEFAULT_LEAD_FIELDS, FIELD_TYPES } from "../data/mockData";
-import { useAppData } from "../lib/AppDataContext";
+import EmptyState from "../components/EmptyState";
+import { FIELD_TYPES } from "../data/mockData";
 import { useToast } from "../lib/ToastContext";
+import adminService from "../services/adminService";
 
 export default function LeadsCustomFields() {
-  const { customFields, setCustomFields } = useAppData();
   const { notify } = useToast();
-  const [draft, setDraft] = useState(customFields);
-  const dragIndex = useRef(null);
+  const [fields, setFields] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [newLabel, setNewLabel] = useState("");
+  const [newType, setNewType] = useState(FIELD_TYPES[0]);
 
-  useEffect(() => {
-    setDraft(customFields);
-  }, [customFields]);
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await adminService.listCustomFields();
+      setFields(res?.data?.fields || []);
+    } catch (err) {
+      const message = err?.response?.data?.message || "Could not load lead fields.";
+      setError(message);
+      notify(message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [notify]);
 
-  const addField = () => {
-    setDraft((prev) => [...prev, { id: `cf-${Date.now()}`, label: "", type: "Text", required: false }]);
-  };
+  useEffect(() => { load(); }, [load]);
 
-  const updateField = (id, patch) => {
-    setDraft((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
-  };
-
-  const removeField = (id) => {
-    setDraft((prev) => prev.filter((f) => f.id !== id));
-  };
-
-  const reorder = (from, to) => {
-    setDraft((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
-    });
-  };
-
-  const save = () => {
-    const missingLabels = draft.some((f) => !f.label.trim());
-    if (missingLabels) {
-      notify("Every custom field needs a label before saving.", "warning");
+  // Saved individually rather than as one batch: a field is a row, and editing
+  // one should not risk rewriting the others.
+  const add = async () => {
+    if (!newLabel.trim()) {
+      notify("Give the field a label first.", "warning");
       return;
     }
-    setCustomFields(draft);
-    notify("Field configuration saved — agent call screens update instantly.", "success", { title: "Lead Fields Updated" });
+    setBusy("new");
+    try {
+      await adminService.createCustomField({
+        field_label: newLabel.trim(),
+        field_type: newType,
+        display_order: fields.length + 1,
+      });
+      setNewLabel("");
+      notify("Field added — agent call screens pick it up on their next load.", "success");
+      load();
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not add the field.", "error");
+    } finally {
+      setBusy(null);
+    }
   };
+
+  const update = async (field, patch) => {
+    setBusy(field.id);
+    try {
+      await adminService.updateCustomField(field.id, patch);
+      load();
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not save the field.", "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async (field) => {
+    setBusy(field.id);
+    try {
+      await adminService.deleteCustomField(field.id);
+      notify(`"${field.field_label}" removed.`, "success");
+      load();
+    } catch (err) {
+      // Built-in fields are refused by the server, with a reason.
+      notify(err?.response?.data?.message || "Could not remove the field.", "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const defaults = fields.filter((f) => f.is_default_field);
+  const custom = fields.filter((f) => !f.is_default_field);
 
   return (
     <div>
-      <ScreenHeader
-        category="Leads"
-        title="Custom Fields"
-        actions={
-          <button onClick={save} className="btn-purple">
-            Save Field Configuration
-          </button>
-        }
-      />
+      <ScreenHeader category="Leads" title="Custom Fields" />
       <div className="grid grid-cols-1 gap-6 p-8 lg:grid-cols-2">
         <div className="card">
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Default Fields</h3>
-          <div className="space-y-1.5">
-            {DEFAULT_LEAD_FIELDS.map((f) => (
-              <div key={f.id} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5">
-                <span className="text-sm text-[var(--color-text-primary)]">{f.label}</span>
-                <Lock size={14} className="text-[var(--color-text-tertiary)]" />
-              </div>
-            ))}
-          </div>
+          {loading ? (
+            <p className="text-sm text-[var(--color-text-tertiary)]">Loading…</p>
+          ) : defaults.length === 0 ? (
+            <p className="text-sm text-[var(--color-text-tertiary)]">No default fields configured.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {defaults.map((f) => (
+                <div key={f.id} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5">
+                  <span className="text-sm text-[var(--color-text-primary)]">{f.field_label}</span>
+                  <Lock size={14} className="text-[var(--color-text-tertiary)]" title="Built in — cannot be removed" />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="card">
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Custom Fields</h3>
 
-          <div className="space-y-2">
-            {draft.map((f, i) => (
-              <div
-                key={f.id}
-                draggable
-                onDragStart={() => (dragIndex.current = i)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => {
-                  if (dragIndex.current === null || dragIndex.current === i) return;
-                  reorder(dragIndex.current, i);
-                  dragIndex.current = null;
-                }}
-                className="rounded-lg border border-[var(--color-border)] bg-white p-3"
-              >
-                <div className="flex items-start gap-2">
-                  <span className="mt-2.5 cursor-grab text-[var(--color-text-tertiary)]" title="Drag to reorder">
-                    <GripVertical size={16} />
-                  </span>
-                  <div className="flex-1 space-y-2">
-                    <input
-                      value={f.label}
-                      onChange={(e) => updateField(f.id, { label: e.target.value })}
-                      placeholder="e.g. Roof Age, Home Owner, Insurance Provider"
-                      className="input-field"
-                    />
-                    <div className="flex flex-wrap items-center gap-3">
-                      <select value={f.type} onChange={(e) => updateField(f.id, { type: e.target.value })} className="input-field w-auto">
-                        {FIELD_TYPES.map((t) => (
-                          <option key={t}>{t}</option>
-                        ))}
-                      </select>
-                      <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-                        <button
-                          type="button"
-                          onClick={() => updateField(f.id, { required: !f.required })}
-                          className={`h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${f.required ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}
+          {loading ? (
+            <p className="text-sm text-[var(--color-text-tertiary)]">Loading…</p>
+          ) : error ? (
+            <EmptyState icon={Plus} title="Could not load fields" description={error} />
+          ) : custom.length === 0 ? (
+            <p className="mb-3 text-sm text-[var(--color-text-tertiary)]">
+              No custom fields yet. Add one below and it appears on every agent's lead card.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {custom.map((f) => (
+                <div key={f.id} className="rounded-lg border border-[var(--color-border)] bg-white p-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 space-y-2">
+                      <input
+                        defaultValue={f.field_label}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v && v !== f.field_label) update(f, { field_label: v });
+                        }}
+                        placeholder="e.g. Roof Age, Home Owner, Insurance Provider"
+                        className="input-field"
+                      />
+                      <div className="flex flex-wrap items-center gap-3">
+                        <select
+                          value={f.field_type}
+                          onChange={(e) => update(f, { field_type: e.target.value })}
+                          className="input-field w-auto"
                         >
-                          <span className={`block h-4 w-4 translate-x-0.5 rounded-full bg-white transition-transform duration-200 ${f.required ? "translate-x-4" : ""}`} />
-                        </button>
-                        Required
-                      </label>
+                          {FIELD_TYPES.map((t) => <option key={t}>{t}</option>)}
+                        </select>
+                        <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+                          <button
+                            type="button"
+                            onClick={() => update(f, { is_required: !f.is_required })}
+                            className={`h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${f.is_required ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}
+                          >
+                            <span className={`block h-4 w-4 translate-x-0.5 rounded-full bg-white transition-transform duration-200 ${f.is_required ? "translate-x-4" : ""}`} />
+                          </button>
+                          Required
+                        </label>
+                      </div>
                     </div>
+                    <button
+                      onClick={() => remove(f)}
+                      disabled={busy === f.id}
+                      className="mt-1 text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-danger)] disabled:opacity-40"
+                      aria-label="Delete field"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
-                  <button onClick={() => removeField(f.id)} className="mt-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-danger)] transition-colors" aria-label="Delete field">
-                    <Trash2 size={16} />
-                  </button>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
-          <button onClick={addField} className="btn-gray mt-3 w-full">
-            <Plus size={15} /> Add Custom Field
-          </button>
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+              placeholder="New field label"
+              className="input-field flex-1"
+            />
+            <select value={newType} onChange={(e) => setNewType(e.target.value)} className="input-field w-auto">
+              {FIELD_TYPES.map((t) => <option key={t}>{t}</option>)}
+            </select>
+            <button onClick={add} disabled={busy === "new" || !newLabel.trim()} className="btn-purple shrink-0 disabled:opacity-40">
+              <Plus size={15} /> Add
+            </button>
+          </div>
         </div>
       </div>
     </div>

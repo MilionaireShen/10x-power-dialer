@@ -3,10 +3,8 @@ import {
   CAMPAIGNS,
   DEFAULT_CUSTOM_FIELDS,
   SEED_CALLBACKS,
-  USERS,
   CLIENTS,
   DISPOSITIONS,
-  SCRIPTS,
   PHONE_NUMBERS,
   IVR_RULES,
   INTEGRATIONS,
@@ -44,10 +42,13 @@ export function AppDataProvider({ children }) {
   const [campaigns, setCampaigns] = useState(CAMPAIGNS);
   const [customFields, setCustomFields] = useState(DEFAULT_CUSTOM_FIELDS);
   const [callbacks, setCallbacks] = useState(SEED_CALLBACKS);
-  const [users, setUsers] = useState(USERS);
+  // Users come from the API on the screens that need them; the context no
+  // longer keeps a roster of its own.
+  const [users, setUsers] = useState([]);
   const [clients, setClients] = useState(CLIENTS);
   const [dispositions, setDispositions] = useState(DISPOSITIONS);
-  const [scripts, setScripts] = useState(SCRIPTS);
+  // Scripts are read from the API by the screens that show them.
+  const [scripts, setScripts] = useState([]);
   const [phoneNumbers, setPhoneNumbers] = useState(PHONE_NUMBERS);
   const [ivrRules, setIvrRules] = useState(IVR_RULES);
   const [integrations, setIntegrations] = useState(INTEGRATIONS);
