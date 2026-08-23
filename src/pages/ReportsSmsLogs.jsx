@@ -13,10 +13,12 @@ import smsService from "../services/smsService";
 const STATUS_META = {
   queued: { dot: "#D97706", label: "Queued" },
   sending: { dot: "#D97706", label: "Sending" },
-  sent: { dot: "#2563EB", label: "Sent" },
+  // Accepted by a carrier for delivery — which is not the same as a handset
+  // having received it, and is labelled so it cannot be read that way.
+  sent: { dot: "#2563EB", label: "Sent to carrier" },
   delivered: { dot: "#059669", label: "Delivered" },
-  delivery_unconfirmed: { dot: "#EA580C", label: "Delivery Unconfirmed" },
-  failed: { dot: "#DC2626", label: "Failed" },
+  delivery_unconfirmed: { dot: "#EA580C", label: "Delivery unconfirmed" },
+  failed: { dot: "#DC2626", label: "Not delivered" },
   received: { dot: "#7C3AED", label: "Received" },
 };
 
@@ -201,9 +203,9 @@ export default function ReportsSmsLogs() {
                         </span>
                         {/* The reason is what tells an agent whether the
                             customer could ever have received it. */}
-                        {m.status === "failed" && m.failed_reason && (
+                        {(m.status === "failed" || m.status === "delivery_unconfirmed") && (
                           <p className="mt-0.5 max-w-[200px] text-[11px] text-[var(--color-danger)]" title={m.failed_reason}>
-                            {m.error_code ? `${m.error_code}: ` : ""}{m.failed_reason}
+                            {m.failed_reason ? `${m.error_code ? `${m.error_code}: ` : ""}${m.failed_reason}` : "No delivery confirmation from the carrier"}
                           </p>
                         )}
                       </td>

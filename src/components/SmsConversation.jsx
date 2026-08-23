@@ -7,15 +7,24 @@ import smsService from "../services/smsService";
 // happened, with the confirmation outcome shown against the message that
 // produced it.
 
+// Telnyx's lifecycle, not a simplification of it. "Sent" means a carrier
+// accepted the message for delivery and says nothing about whether a handset
+// ever got it — only "Delivered" does, and it is only ever set from Telnyx's
+// terminal event.
 const STATUS_LABEL = {
   queued: "Queued",
   sending: "Sending",
-  sent: "Sent",
+  sent: "Sent to carrier",
   delivered: "Delivered",
   delivery_unconfirmed: "Delivery unconfirmed",
-  failed: "Failed",
+  failed: "Not delivered",
   received: "Received",
 };
+
+// Statuses where the customer plainly did not get the message, or where we
+// cannot say that they did. Both are worth an agent's attention before they
+// tell someone on a call to expect a text.
+const NOT_ARRIVED = new Set(["failed", "delivery_unconfirmed"]);
 
 const CONFIRMATION_LABEL = {
   sms_not_sent: "SMS not sent",
@@ -194,18 +203,33 @@ export default function SmsConversation({ conversationId, canSend = true, onChan
                     {outbound && (
                       <>
                         <span>·</span>
-                        <span className={m.status === "failed" ? "text-[var(--color-danger)]" : ""}>
+                        <span className={NOT_ARRIVED.has(m.status) ? "text-[var(--color-danger)]" : ""}>
                           {STATUS_LABEL[m.status] || m.status}
                         </span>
+                        {/* Some networks refuse our number, so the message goes
+                            out under a name instead. Worth showing: it is what
+                            the customer actually sees, and it explains why the
+                            message carries a "text us back on…" line. */}
+                        {m.sender_id && (
+                          <>
+                            <span>·</span>
+                            <span title="This network does not accept our number, so the message was sent under this name. Replies come back to your DID.">
+                              sent as {m.sender_id}
+                            </span>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
-                  {/* Failure detail belongs next to the message, where the
-                      person deciding whether to call the customer will see it. */}
-                  {m.status === "failed" && m.failed_reason && (
+                  {/* The provider's own reason, next to the message, where the
+                      person deciding whether to phone the customer will see it.
+                      "Not delivered" alone would leave them guessing why. */}
+                  {NOT_ARRIVED.has(m.status) && (
                     <p className={`mt-1 flex items-start gap-1 text-[11px] text-[var(--color-danger)] ${outbound ? "justify-end text-right" : ""}`}>
                       <AlertTriangle size={11} className="mt-px shrink-0" />
-                      {m.error_code ? `${m.error_code}: ` : ""}{m.failed_reason}
+                      {m.failed_reason
+                        ? `${m.error_code ? `${m.error_code}: ` : ""}${m.failed_reason}`
+                        : "The carrier gave no delivery confirmation — the customer may not have received this."}
                     </p>
                   )}
                 </div>
