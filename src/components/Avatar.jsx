@@ -1,4 +1,4 @@
-import { initials } from "../data/mockData";
+import { initials } from "../data/catalogues";
 
 export default function Avatar({ name, color = "#5B3FE0", size = 40 }) {
   return (

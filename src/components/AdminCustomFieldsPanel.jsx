@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Lock, Plus, Trash2, GripVertical } from "lucide-react";
 import SidePanel from "./SidePanel";
-import { DEFAULT_LEAD_FIELDS, FIELD_TYPES } from "../data/mockData";
+import { DEFAULT_LEAD_FIELDS, FIELD_TYPES } from "../data/catalogues";
 import { useAppData } from "../lib/AppDataContext";
 import { useToast } from "../lib/ToastContext";
 

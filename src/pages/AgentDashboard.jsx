@@ -3,7 +3,9 @@ import { useNavigate, useOutletContext } from "react-router-dom";
 import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Check, MapPin, CalendarDays, AlertTriangle } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
+import { useAgentLiveState } from "../lib/useAgentLiveState";
 import { useToast } from "../lib/ToastContext";
+import adminService from "../services/adminService";
 import StatusPill from "../components/StatusPill";
 import SidePanel from "../components/SidePanel";
 import AgentStatsPanel from "../components/AgentStatsPanel";
@@ -91,22 +93,27 @@ function buildManualDialLead(phone) {
 
 export default function AgentDashboard() {
   const { user, activeCampaignId, sessionId, logout } = useAuth();
-  const {
-    clients,
-    customFields,
-    callbacks,
-    addCallback,
-    updateCallbackStatus,
-    agentMessages,
-    consumeAgentMessage,
-    agentControl,
-    logManualDialCall,
-    phoneNumbers,
-    selectBestDID,
-    markDIDInUse,
-    recordCallOutcome,
-    recordAgentLogout,
-  } = useAppData();
+  const { customFields, phoneNumbers, selectBestDID, markDIDInUse } = useAppData();
+
+  // Clients are read from the API rather than a shared context: the booking
+  // panel needs the client's calendar link, and the campaign points at its
+  // client by id.
+  const [clients, setClients] = useState([]);
+  const [myCallbacks, setMyCallbacks] = useState([]);
+
+  const refreshMyCallbacks = useCallback(
+    () =>
+      adminService
+        .listCallbacks({ page_size: 20 })
+        .then((r) => setMyCallbacks(r?.data?.callbacks || []))
+        .catch(() => {}),
+    []
+  );
+
+  useEffect(() => {
+    adminService.listClients().then((r) => setClients(r?.data?.clients || [])).catch(() => {});
+    refreshMyCallbacks();
+  }, [refreshMyCallbacks]);
   const { notify } = useToast();
   const navigate = useNavigate();
   // The softphone (SIP.js, registered against Telnyx) is instantiated once
@@ -141,7 +148,9 @@ export default function AgentDashboard() {
 
   // The client (and therefore which calendar to show) is derived entirely
   // from the lead's campaign — the agent never picks it themselves.
-  const resolvedClient = clients.find((c) => c.campaignIds?.includes(campaign?.id)) ?? null;
+  // A campaign carries its client's id, so the client is looked up by that
+  // rather than by scanning each client's list of campaigns.
+  const resolvedClient = clients.find((c) => c.id === campaign?.client_id) ?? null;
   const wrapUpLimit = campaign?.wrapup_time_seconds ?? 60;
 
   const [hotkeys, setHotkeys] = useState([]);
@@ -238,16 +247,14 @@ export default function AgentDashboard() {
   const [dtmfInput, setDtmfInput] = useState("");
   const [isManualCall, setIsManualCall] = useState(false);
   // The DID Reputation Engine — never chosen by the agent. selectBestDID()
-  // picks it the instant a call connects; recordCallOutcome() reports back
-  // to the engine the instant wrap-up is submitted.
+  // picks it the instant a call connects. The outcome is not reported back
+  // from here: the score is recalculated server-side from the calls table,
+  // which already records how this call went.
   const [activeDIDId, setActiveDIDId] = useState(null);
   const [flashKey, setFlashKey] = useState(null);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
   const [scheduledCallbackAt, setScheduledCallbackAt] = useState(null);
-  const [activeDuePopup, setActiveDuePopup] = useState(null);
-  const lastForcedAtRef = useRef(null);
-  const lastForceLogoutAtRef = useRef(null);
 
   const [statsToday, setStatsToday] = useState({
     calls: 0,
@@ -412,9 +419,8 @@ export default function AgentDashboard() {
 
   // Reacts to the tick above rather than nesting these setState calls inside
   // setWrapSeconds's updater — updater functions must stay pure, and calling
-  // another component's setter (recordAgentLogout, from AppDataProvider)
-  // from inside one trips React's "setState while rendering a different
-  // component" warning.
+  // another component's setter from inside one trips React's "setState while
+  // rendering a different component" warning.
   useEffect(() => {
     if (callState !== "wrapup" || sessionEnded) return;
     const yellowAt = Math.round(wrapUpLimit * 0.75);
@@ -427,64 +433,54 @@ export default function AgentDashboard() {
     // silently resetting status in place.
     if (wrapSeconds >= wrapUpLimit) {
       setAutoLogoutCount((c) => c + 1);
-      recordAgentLogout(user.name, "wrapup_timeout");
+      // The session row records the reason server-side when the session is
+      // closed; this local key only drives the overlay's wording.
       localStorage.setItem("logout_reason", "wrapup_timeout");
       setSessionEnded(true);
     }
-  }, [wrapSeconds, callState, sessionEnded, notify, user.name, wrapUpLimit, recordAgentLogout]);
+  }, [wrapSeconds, callState, sessionEnded, notify, user.name, wrapUpLimit]);
 
-  // Poll for a scheduled callback whose time has arrived — surfaces a
-  // bottom-right popup without ever covering the call panel or script.
-  useEffect(() => {
-    const id = setInterval(() => {
-      setActiveDuePopup((current) => {
-        if (current) return current;
-        const due = callbacks.find(
-          (c) => c.agentName === user.name && c.status === "Pending" && c.scheduledAt <= Date.now()
-        );
-        return due ?? null;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [callbacks, user.name]);
+  // Supervisor actions and due callbacks arrive from the server. They used to
+  // come from a React context shared with the admin screens, which only
+  // delivered anything when both were open in the same browser tab.
+  const handleForcedStatus = useCallback(
+    (status) => {
+      setStatus(status);
+      setStatusSince(Date.now());
+      notify(`An administrator changed your status to "${status}".`, "warning", { title: "Status Changed by Admin" });
+    },
+    [notify]
+  );
 
-  // An admin can remotely force a status change or log this agent out —
-  // reflected instantly since it's the same shared context.
-  useEffect(() => {
-    if (agentControl.forcedFor !== user.name || !agentControl.forcedAt) return;
-    if (lastForcedAtRef.current === agentControl.forcedAt) return;
-    lastForcedAtRef.current = agentControl.forcedAt;
-    setStatus(agentControl.forcedStatus);
-    setStatusSince(Date.now());
-    notify(`An administrator changed your status to "${agentControl.forcedStatus}".`, "warning", { title: "Status Changed by Admin" });
-  }, [agentControl, notify, user.name]);
+  const handleForcedLogout = useCallback(
+    (reason) => {
+      notify("You were logged out by an administrator.", "error", { title: "Force Logout" });
+      localStorage.setItem("logout_reason", reason || "admin_kick");
+      logout();
+      navigate("/agent/login");
+    },
+    [notify, logout, navigate]
+  );
 
-  useEffect(() => {
-    if (agentControl.forceLogoutFor !== user.name || !agentControl.forceLogoutAt) return;
-    if (lastForceLogoutAtRef.current === agentControl.forceLogoutAt) return;
-    lastForceLogoutAtRef.current = agentControl.forceLogoutAt;
-    notify("You were logged out by an administrator.", "error", { title: "Force Logout" });
-    localStorage.setItem("logout_reason", "admin_kick");
-    logout();
-    navigate("/agent/login");
-  }, [agentControl, notify, user.name, logout, navigate]);
+  const handleIncomingMessage = useCallback(
+    (m) => notify(m.body, "info", { title: `Message from ${m.from_name || "your supervisor"}` }),
+    [notify]
+  );
 
-  // Admin-sent messages surface as a toast, matching the "small pop-up"
-  // requirement without a second overlay system.
-  useEffect(() => {
-    const mine = agentMessages.filter((m) => m.agentName === user.name);
-    mine.forEach((m) => {
-      notify(m.text, "info", { title: `Message from ${m.from}` });
-      consumeAgentMessage(m.id);
-    });
-  }, [agentMessages, user.name, notify, consumeAgentMessage]);
+  const { dueCallback, resolveCallback, dismissCallbackPopup, noteOwnStatusChange } = useAgentLiveState({
+    enabled: !sessionEnded,
+    onMessage: handleIncomingMessage,
+    onForcedStatus: handleForcedStatus,
+    onForcedLogout: handleForcedLogout,
+  });
 
   const handleStatusChange = (key) => {
     setStatus(key);
     setStatusSince(Date.now());
     setStatusMenuOpen(false);
-    // Best-effort — the local status UI is authoritative either way, this
-    // just keeps the backend's agent_sessions row in sync for reporting.
+    // Recorded locally first so the next poll does not read this agent's own
+    // change as one a supervisor made.
+    noteOwnStatusChange(key);
     agentService.changeStatus(key).catch(() => {});
   };
 
@@ -575,28 +571,11 @@ export default function AgentDashboard() {
       notify("Schedule a callback time before submitting.", "warning");
       return;
     }
-    if (activeDIDId) {
-      recordCallOutcome(activeDIDId, {
-        answered: dispositionKey !== "no_answer",
-        rejected: false,
-        durationSec: callSeconds,
-        disposition: dispositionKey,
-        dncRequest: dispositionKey === "dnc",
-        complaint: false,
-      });
-    }
-    if (isManualCall) {
-      const dispositionInfo = dispositions.find((d) => d.key === dispositionKey);
-      logManualDialCall({
-        agentName: user.name,
-        leadName: lead.fullName,
-        phone: lead.phone,
-        duration: formatDuration(callSeconds),
-        disposition: dispositionInfo?.label,
-        dispositionColor: dispositionInfo?.color,
-        campaign: campaign?.name,
-      });
-    }
+    // The DID's reputation is recalculated server-side from the calls table,
+    // which already holds this call's outcome — a second, browser-local score
+    // would only be a copy free to disagree with it. Manual dials are likewise
+    // already recorded as call rows by /calls/manual, so there is no separate
+    // client-side log to keep.
     notify(`Call logged as "${dispositions.find((d) => d.key === dispositionKey)?.label}".`, "success", {
       title: "Disposition Submitted",
     });
@@ -652,24 +631,44 @@ export default function AgentDashboard() {
     navigate("/agent/login");
   };
 
-  const handleScheduleCallback = (scheduledAt, timezone) => {
-    addCallback({ agentName: user.name, leadName: lead.fullName, phone: lead.phone, scheduledAt, timezone });
-    setScheduledCallbackAt(scheduledAt);
-    notify(`Callback scheduled for ${new Date(scheduledAt).toLocaleString()}.`, "success", { title: "Callback Scheduled" });
+  const handleScheduleCallback = async (scheduledAt, timezone) => {
+    try {
+      await adminService.createCallback({
+        lead_id: lead.id || null,
+        campaign_id: campaign?.id || null,
+        scheduled_for: new Date(scheduledAt).toISOString(),
+        timezone,
+      });
+      setScheduledCallbackAt(scheduledAt);
+      await refreshMyCallbacks();
+      notify(`Callback scheduled for ${new Date(scheduledAt).toLocaleString()}.`, "success", { title: "Callback Scheduled" });
+    } catch (err) {
+      // Left unscheduled rather than shown as booked: an agent who is told a
+      // callback is set must not be the only one who thinks so.
+      notify(err?.response?.data?.message || "Could not schedule that callback.", "error");
+    }
   };
 
-  const handleDialNowPopup = () => {
-    if (!activeDuePopup) return;
-    updateCallbackStatus(activeDuePopup.id, "Completed", { completedAt: Date.now() });
-    notify(`Marked callback with ${activeDuePopup.leadName} as completed.`, "success");
-    setActiveDuePopup(null);
+  const handleDialNowPopup = async () => {
+    if (!dueCallback) return;
+    try {
+      await resolveCallback(dueCallback.id, { status: "completed", popup_shown: true });
+      await refreshMyCallbacks();
+      notify("Callback marked as completed.", "success");
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not update that callback.", "error");
+    }
   };
 
-  const handleDismissPopup = () => {
-    if (!activeDuePopup) return;
-    updateCallbackStatus(activeDuePopup.id, "Dismissed", { dismissedAt: Date.now() });
-    notify("Callback dismissed — this is logged for your admin.", "warning");
-    setActiveDuePopup(null);
+  const handleDismissPopup = async () => {
+    if (!dueCallback) return;
+    try {
+      await dismissCallbackPopup(dueCallback.id, { onCall: callState === "on_call" });
+      await refreshMyCallbacks();
+      notify("Callback dismissed — this is logged for your admin.", "warning");
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not dismiss that callback.", "error");
+    }
   };
 
   const updateLeadField = (key, value) => setLead((l) => ({ ...l, [key]: value }));
@@ -698,7 +697,7 @@ export default function AgentDashboard() {
           autoLogoutCount,
         }}
         leaderboard={leaderboardData}
-        myCallbacks={callbacks.filter((c) => c.agentName === user.name).slice(0, 5)}
+        myCallbacks={myCallbacks.slice(0, 5)}
       />
 
       <AgentLeaderboardPanel open={openPanel === "leaderboard"} onClose={closePanel} currentAgentName={user.name} />
@@ -790,7 +789,7 @@ export default function AgentDashboard() {
         <BottomBar campaignName={campaign?.name} status={status} statusSince={statusSince} />
       </div>
 
-      <CallbackPopup callback={activeDuePopup} onDialNow={handleDialNowPopup} onDismiss={handleDismissPopup} />
+      <CallbackPopup callback={dueCallback} onDialNow={handleDialNowPopup} onDismiss={handleDismissPopup} />
 
       <SidePanel
         open={smsOpen}

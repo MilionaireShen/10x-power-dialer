@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import SidePanel from "./SidePanel";
-import { ROLE_CARDS } from "../data/mockData";
+import { ROLE_CARDS } from "../data/catalogues";
 import { useToast } from "../lib/ToastContext";
 import userService from "../services/userService";
 
