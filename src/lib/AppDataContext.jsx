@@ -29,6 +29,16 @@ const AppDataContext = createContext(null);
 let idCounter = 0;
 const nextId = (prefix) => `${prefix}-${Date.now()}-${++idCounter}`;
 
+// Read from storage rather than through AuthContext: this provider sits above
+// the router and must not depend on the auth provider's position in the tree.
+function readStoredRole() {
+  try {
+    return JSON.parse(localStorage.getItem("10x-power-dialer:user") || "null")?.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function AppDataProvider({ children }) {
   // ---- Shared server data -------------------------------------------------
   const [campaigns, setCampaigns] = useState([]);
@@ -47,10 +57,16 @@ export function AppDataProvider({ children }) {
   // and reports its own errors, and the shell must still render.
   useEffect(() => {
     let cancelled = false;
+    // The numbers list is admin-only. Asking for it as an agent would 403 on
+    // every login — harmless, but a console error on every session start is
+    // exactly the noise that hides a real one. Agents do not need it: the
+    // outbound number is chosen server-side when the call is placed.
+    const isAgent = readStoredRole() === "agent";
+
     Promise.all([
       campaignService.list().catch(() => null),
       adminService.listCustomFields().catch(() => null),
-      adminService.phoneNumbers().catch(() => null),
+      isAgent ? Promise.resolve(null) : adminService.phoneNumbers().catch(() => null),
     ])
       .then(([camp, fields, numbers]) => {
         if (cancelled) return;
