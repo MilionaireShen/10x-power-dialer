@@ -57,6 +57,15 @@ export function AppDataProvider({ children }) {
   // and reports its own errors, and the shell must still render.
   useEffect(() => {
     let cancelled = false;
+    // Only the authenticated shell needs this shared data. This provider sits
+    // above the router, so without a token guard it also fires on the public
+    // login pages, where every request 401s and the api client's response
+    // interceptor hard-redirects back to /login — reloading this provider and
+    // looping forever.
+    if (!localStorage.getItem("10x-power-dialer:access_token")) {
+      setLoaded(true);
+      return;
+    }
     // The numbers list is admin-only. Asking for it as an agent would 403 on
     // every login — harmless, but a console error on every session start is
     // exactly the noise that hides a real one. Agents do not need it: the
