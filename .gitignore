@@ -26,3 +26,5 @@ dist-ssr
 *.sw?
 
 cm.txt
+.vercel
+.env*
