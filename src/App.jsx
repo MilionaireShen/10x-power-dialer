@@ -45,6 +45,7 @@ import CampaignsDispositions from "./pages/CampaignsDispositions";
 
 import LeadsSearch from "./pages/LeadsSearch";
 import LeadsUpload from "./pages/LeadsUpload";
+import LeadsLists from "./pages/LeadsLists";
 import LeadsHealth from "./pages/LeadsHealth";
 import LeadsCustomFields from "./pages/LeadsCustomFields";
 
@@ -193,6 +194,7 @@ export default function App() {
                 {/* Leads */}
                 <Route path="admin/leads/search" element={<Admin anyPermission={LEADS_PERMS}><LeadsSearch /></Admin>} />
                 <Route path="admin/leads/upload" element={<Admin anyPermission={LEADS_PERMS}><LeadsUpload /></Admin>} />
+                <Route path="admin/leads/lists" element={<Admin anyPermission={LEADS_PERMS}><LeadsLists /></Admin>} />
                 <Route path="admin/leads/health" element={<Admin anyPermission={LEADS_PERMS}><LeadsHealth /></Admin>} />
                 <Route path="admin/leads/custom-fields" element={<Admin anyPermission={LEADS_PERMS}><LeadsCustomFields /></Admin>} />
 

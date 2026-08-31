@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import SidePanel from "./SidePanel";
 import { useToast } from "../lib/ToastContext";
 import campaignService from "../services/campaignService";
 import smsService from "../services/smsService";
+import leadService from "../services/leadService";
 
 const CHAR_LIMIT = 160;
 
@@ -28,7 +30,17 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
   const [variables, setVariables] = useState([]);
   const [preview, setPreview] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [leadLists, setLeadLists] = useState([]);
+  const [leadListBusy, setLeadListBusy] = useState(false);
+  const [addListId, setAddListId] = useState("");
   const textareaRef = useRef(null);
+
+  const loadLeadLists = useCallback(() => {
+    if (!campaign) return;
+    leadService.listLists()
+      .then((res) => setLeadLists(res?.data || []))
+      .catch(() => { /* the Lead Lists section just shows empty */ });
+  }, [campaign]);
 
   useEffect(() => {
     if (!campaign) return;
@@ -43,6 +55,11 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     setDeclineKeywords(joinKeywords(campaign.sms_decline_keywords));
     setRescheduleKeywords(joinKeywords(campaign.sms_reschedule_keywords));
   }, [campaign]);
+
+  useEffect(() => {
+    setAddListId("");
+    loadLeadLists();
+  }, [loadLeadLists]);
 
   useEffect(() => {
     if (!campaign) return;
@@ -89,6 +106,24 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     });
   };
 
+  // Lead-list assignment goes through the same PATCH /leads/lists/:id endpoint
+  // the Lead Lists screen uses, so the two stay in sync. onSaved() refreshes
+  // the campaign list (leads_remaining etc.).
+  const assignLeadList = async (listId, campaignId) => {
+    setLeadListBusy(true);
+    try {
+      const res = await leadService.assignList(listId, campaignId);
+      notify(res.message || "Lead list updated.", "success", { title: "Campaign Updated" });
+      setAddListId("");
+      loadLeadLists();
+      onSaved?.();
+    } catch (err) {
+      notify(err?.message || "Could not update the lead list.", "error", { title: "Assignment Failed" });
+    } finally {
+      setLeadListBusy(false);
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     try {
@@ -130,12 +165,23 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
       </div>
 
       {tab === "general" && (
-        <dl className="space-y-2.5 text-sm">
-          <Row label="Dialing Mode" value={`${campaign.dialing_mode} Mode`} />
-          <Row label="Status" value={campaign.status} />
-          <Row label="Agents Assigned" value={campaign.agent_count} />
-          <Row label="Wrap-Up Time" value={`${campaign.wrapup_time_seconds}s`} />
-        </dl>
+        <div className="space-y-6">
+          <dl className="space-y-2.5 text-sm">
+            <Row label="Dialing Mode" value={`${campaign.dialing_mode} Mode`} />
+            <Row label="Status" value={campaign.status} />
+            <Row label="Agents Assigned" value={campaign.agent_count} />
+            <Row label="Wrap-Up Time" value={`${campaign.wrapup_time_seconds}s`} />
+          </dl>
+
+          <LeadListSection
+            campaign={campaign}
+            leadLists={leadLists}
+            busy={leadListBusy}
+            addListId={addListId}
+            setAddListId={setAddListId}
+            onAssign={assignLeadList}
+          />
+        </div>
       )}
 
       {tab === "sms" && (
@@ -290,6 +336,86 @@ function Row({ label, value }) {
     <div className="flex items-center justify-between border-b border-[var(--color-border)] py-2 last:border-0">
       <dt className="text-[var(--color-text-secondary)]">{label}</dt>
       <dd className="font-medium text-[var(--color-text-primary)]">{value}</dd>
+    </div>
+  );
+}
+
+function LeadListSection({ campaign, leadLists, busy, addListId, setAddListId, onAssign }) {
+  const assigned = leadLists.filter((l) => l.assigned_campaign?.id === campaign.id);
+  const assignable = leadLists.filter((l) => l.assigned_campaign?.id !== campaign.id);
+  const totalLeads = assigned.reduce((s, l) => s + (l.lead_count ?? l.total_leads ?? 0), 0);
+  const dialable = assigned.reduce((s, l) => s + (l.pending_count ?? 0), 0);
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Lead Lists</h3>
+        {assigned.length > 0 && (
+          <span className="text-xs text-[var(--color-text-tertiary)]">
+            {totalLeads.toLocaleString()} leads · {dialable.toLocaleString()} dialable
+          </span>
+        )}
+      </div>
+
+      {assigned.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-3 text-xs text-[var(--color-text-tertiary)]">
+          No lead lists assigned — this campaign has no leads to dial yet.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {assigned.map((l) => (
+            <li
+              key={l.id}
+              className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2"
+            >
+              <div className="min-w-0 pr-2">
+                <p className="truncate text-sm font-medium text-[var(--color-text-primary)]">{l.name}</p>
+                <p className="text-[11px] text-[var(--color-text-tertiary)]">
+                  {(l.lead_count ?? l.total_leads ?? 0).toLocaleString()} leads
+                </p>
+              </div>
+              <button
+                onClick={() => onAssign(l.id, null)}
+                disabled={busy}
+                title="Remove from this campaign"
+                aria-label={`Remove ${l.name} from this campaign`}
+                className="shrink-0 rounded-lg p-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-danger-tint)] hover:text-[var(--color-danger)] disabled:opacity-40"
+              >
+                <X size={15} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-2.5 flex gap-2">
+        <select
+          value={addListId}
+          onChange={(e) => setAddListId(e.target.value)}
+          disabled={busy || assignable.length === 0}
+          className="input-field flex-1 py-2 text-sm disabled:opacity-50"
+        >
+          <option value="">
+            {assignable.length === 0 ? "No other lead lists — upload one first" : "Add a lead list…"}
+          </option>
+          {assignable.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name} ({(l.lead_count ?? l.total_leads ?? 0).toLocaleString()})
+              {l.assigned_campaign ? ` — now on ${l.assigned_campaign.name}` : ""}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => addListId && onAssign(addListId, campaign.id)}
+          disabled={busy || !addListId}
+          className="btn-purple shrink-0 px-4 py-2 text-sm disabled:opacity-40"
+        >
+          Add
+        </button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+        Adding a list moves its leads into this campaign so the dialer can call them. Removing sends them back to unassigned.
+      </p>
     </div>
   );
 }

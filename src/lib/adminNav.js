@@ -85,6 +85,7 @@ export const ADMIN_NAV = [
     items: [
       { label: "Lead Search", path: "/admin/leads/search" },
       { label: "Upload Leads", path: "/admin/leads/upload" },
+      { label: "Lead Lists", path: "/admin/leads/lists" },
       { label: "Lead List Health", path: "/admin/leads/health" },
       { label: "Custom Fields", path: "/admin/leads/custom-fields" },
     ],

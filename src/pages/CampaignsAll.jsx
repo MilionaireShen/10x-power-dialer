@@ -254,7 +254,7 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
         </Field>
 
         <p className="text-xs text-[var(--color-text-tertiary)]">
-          Lead lists and call scripts are attached to a campaign after it's created (via Lead List Manager and Campaign Scripts).
+          Assign lead lists after the campaign is created — from Edit → General → Lead Lists, or from Leads → Lead Lists.
         </p>
 
         <button onClick={save} disabled={saving} className="btn-purple w-full py-3">

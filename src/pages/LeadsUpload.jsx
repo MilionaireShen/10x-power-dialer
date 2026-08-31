@@ -48,7 +48,13 @@ export default function LeadsUpload() {
     const f = files[0];
     setResult(null);
     setFile(f);
-    if (!listName) setListName(f.name.replace(/\.csv$/i, ""));
+    // Every upload becomes its own Lead List. Default the name to
+    // "Lead List – <file>" so it is recognisable on the Lead Lists screen;
+    // the admin can still rename it before importing.
+    if (!listName) {
+      const base = f.name.replace(/\.[^.]+$/, "").trim();
+      setListName(/^lead list/i.test(base) ? base : `Lead List – ${base}`);
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result || "");
