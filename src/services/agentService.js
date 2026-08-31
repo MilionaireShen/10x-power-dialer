@@ -2,6 +2,10 @@ import api from "./api";
 
 const agentService = {
   changeStatus: (status) => api.post("/agent/status", { status }).then((r) => r.data),
+  // Liveness ping. The Agent Monitor only counts a session as online while
+  // these keep arriving; once the tab closes and they stop, the backend
+  // presence reaper marks the session stale and then ends it.
+  heartbeat: () => api.post("/agent/heartbeat").then((r) => r.data),
   getSessionSummary: (sessionId) => api.get(`/agent/session/${sessionId}/summary`).then((r) => r.data),
   getSipToken: () => api.get("/agent/sip-token").then((r) => r.data),
   createSipCredential: (userId) => api.post(`/admin/agents/${userId}/sip-credential`).then((r) => r.data),

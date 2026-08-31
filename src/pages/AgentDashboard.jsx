@@ -474,6 +474,18 @@ export default function AgentDashboard() {
     onForcedLogout: handleForcedLogout,
   });
 
+  // Presence heartbeat. While the dialer is open this pings the backend every
+  // 20s; the Agent Monitor counts this session as online only for as long as
+  // the pings keep coming. When the tab closes they stop and the backend
+  // reaper takes the agent offline — so "online" reflects a real connection,
+  // not a row that was never cleaned up.
+  useEffect(() => {
+    if (sessionEnded) return undefined;
+    agentService.heartbeat().catch(() => {});
+    const id = setInterval(() => agentService.heartbeat().catch(() => {}), 20000);
+    return () => clearInterval(id);
+  }, [sessionEnded]);
+
   const handleStatusChange = (key) => {
     setStatus(key);
     setStatusSince(Date.now());
