@@ -15,6 +15,16 @@ const agentService = {
   createSipCredential: (userId) => api.post(`/admin/agents/${userId}/sip-credential`).then((r) => r.data),
   removeSipCredential: (userId) => api.delete(`/admin/agents/${userId}/sip-credential`).then((r) => r.data),
   getActiveSessions: () => api.get("/agent/sessions/active").then((r) => r.data),
+  // This agent's Parallel Dials setting, the company's ceiling, and
+  // whether parallel dialing is on at all. Persisted server-side, so it
+  // survives a refresh or a fresh login.
+  getParallelDials: () => api.get("/agent/parallel-dials").then((r) => r.data),
+  setParallelDials: (n) => api.post("/agent/parallel-dials", { parallel_dials: n }).then((r) => r.data),
+  // How many of this agent's current parallel batch are still actively
+  // ringing/dialing right now — the live count behind the "N active dials"
+  // indicator. active_calls reflects real open call rows, never the
+  // configured maximum.
+  getParallelStatus: () => api.get("/agent/parallel-status").then((r) => r.data),
 };
 
 export default agentService;

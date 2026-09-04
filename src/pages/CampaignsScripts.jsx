@@ -188,8 +188,14 @@ function ScriptEditor({ script, campaigns, onClose, onSave }) {
           </select>
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Opening / Intro</label>
-          <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={8} className="input-field resize-none" />
+          <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Script Content</label>
+          <p className="mb-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+            Paste the full script as-is. Start a line with <code className="rounded bg-[var(--color-bg)] px-1">## Section Name</code> (e.g.{" "}
+            <code className="rounded bg-[var(--color-bg)] px-1">## Opening</code>, <code className="rounded bg-[var(--color-bg)] px-1">## Objections</code>) to break
+            it into sections agents can jump between and collapse during a call — everything else is shown exactly as
+            typed.
+          </p>
+          <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={16} className="input-field resize-y font-mono text-xs" />
         </div>
         <button
           onClick={async () => {

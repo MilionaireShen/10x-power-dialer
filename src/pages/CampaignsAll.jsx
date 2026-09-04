@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Zap, BatteryCharging, ArrowRightCircle, Search } from "lucide-react";
+import { Plus, Zap, BatteryCharging, ArrowRightCircle, Search, Layers } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import SidePanel from "../components/SidePanel";
 import CampaignSettingsPanel from "../components/CampaignSettingsPanel";
@@ -10,6 +10,7 @@ import userService from "../services/userService";
 
 const DIALING_MODES = [
   { key: "predictive", icon: Zap, title: "Predictive", description: "Maximum volume — algorithm dials multiple numbers ahead per agent." },
+  { key: "parallel", icon: Layers, title: "Parallel", description: "Each agent's own leads dialed simultaneously — the first to answer connects, the rest end." },
   { key: "power", icon: BatteryCharging, title: "Power", description: "Preset number of lines dialed per agent simultaneously." },
   { key: "progressive", icon: ArrowRightCircle, title: "Progressive", description: "Automatically dials the next call the moment the previous one ends." },
   { key: "preview", icon: Search, title: "Preview", description: "Agent reviews the full lead profile before the call launches." },

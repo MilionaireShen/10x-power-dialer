@@ -47,6 +47,17 @@ const DISPOSITION_NAME_MAP = {
   follow_up: "follow_up",
 };
 
+// The reverse of the map above — a hotkey press hands submitDisposition()
+// one of these screen-local keys (e.g. "booked"), but the backend's
+// dispositions table (and POST /calls/:id/disposition) only knows the real
+// name (e.g. "booked_appointment"). A direct click on a WrapupState
+// disposition button already passes the real name straight through
+// (dispositions[].key is d.name from the API), so this lookup is a no-op
+// for that path — only hotkey-sourced keys are actually remapped.
+const REVERSE_DISPOSITION_MAP = Object.fromEntries(
+  Object.entries(DISPOSITION_NAME_MAP).map(([dbName, localKey]) => [localKey, dbName])
+);
+
 function todayDateStr() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -291,6 +302,12 @@ export default function AgentDashboard() {
   // Live state of this campaign's dialing engine (GET /dialer/status) —
   // what the "waiting" screen shows instead of a static placeholder.
   const [dialerState, setDialerState] = useState(null);
+  // This agent's Parallel Dials setting + the company's ceiling, and how
+  // many of their current batch are still actively ringing right now —
+  // the numbers behind the Parallel Dials dropdown and the "N active
+  // dials" indicator beside the phone icon.
+  const [parallelSettings, setParallelSettings] = useState({ parallel_dials: 1, max_parallel_dials: 5, parallel_dialing_enabled: false });
+  const [parallelStatus, setParallelStatus] = useState({ active: false, active_calls: 0, requested_count: 0 });
   const [callSeconds, setCallSeconds] = useState(0);
   const [wrapSeconds, setWrapSeconds] = useState(0);
   const [disposition, setDisposition] = useState(null);
@@ -369,9 +386,12 @@ export default function AgentDashboard() {
         ...s,
         calls: row?.total_calls ?? 0,
         connects: row?.connects ?? 0,
-        booked: breakdown["Booked Appointment"] ?? 0,
-        notInterested: breakdown["Not Interested"] ?? 0,
-        noAnswers: breakdown["No Answer"] ?? 0,
+        // Keyed by the disposition's `name` (slug) — calls.disposition
+        // stores that, not the display label, matching every other place a
+        // disposition is referenced (hotkeys included).
+        booked: breakdown["booked_appointment"] ?? 0,
+        notInterested: breakdown["not_interested"] ?? 0,
+        noAnswers: breakdown["no_answer"] ?? 0,
         avgDurationSeconds: row?.avg_call_duration_seconds ?? 0,
       }));
     } catch {
@@ -588,6 +608,56 @@ export default function AgentDashboard() {
     };
   }, [activeCampaignId, campaign?.id, callState, status, sessionEnded]);
 
+  // This agent's Parallel Dials setting + the company's ceiling — loaded
+  // once (it changes rarely, and setParallelDialsOption below keeps this
+  // state in sync with anything the agent actually changes).
+  useEffect(() => {
+    let cancelled = false;
+    agentService
+      .getParallelDials()
+      .then((res) => {
+        if (!cancelled && res?.data) setParallelSettings(res.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Live count of this agent's currently-ringing parallel legs — the
+  // number the "N active dials" indicator shows. Polled quickly (2s) since
+  // this is exactly the figure meant to visibly move as legs resolve.
+  useEffect(() => {
+    if (sessionEnded || !parallelSettings.parallel_dialing_enabled) return undefined;
+    if (callState !== "waiting" || status === "manual_dial") {
+      setParallelStatus({ active: false, active_calls: 0, requested_count: 0 });
+      return undefined;
+    }
+    let cancelled = false;
+    const load = () =>
+      agentService
+        .getParallelStatus()
+        .then((res) => {
+          if (!cancelled && res?.data) setParallelStatus(res.data);
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionEnded, callState, status, parallelSettings.parallel_dialing_enabled]);
+
+  const handleParallelDialsChange = (n) => {
+    const prev = parallelSettings.parallel_dials;
+    setParallelSettings((s) => ({ ...s, parallel_dials: n }));
+    agentService.setParallelDials(n).catch((err) => {
+      setParallelSettings((s) => ({ ...s, parallel_dials: prev }));
+      notify(err?.message || "Could not save your Parallel Dials setting.", "error");
+    });
+  };
+
   // Poll for the dialer call this agent is currently on / being rung for, so
   // a progressive-campaign call arrives with the real lead (name, address,
   // history) already on screen. The softphone only carries audio — it never
@@ -760,14 +830,25 @@ export default function AgentDashboard() {
       notify("Schedule a callback time before submitting.", "warning");
       return;
     }
-    // The DID's reputation is recalculated server-side from the calls table,
-    // which already holds this call's outcome — a second, browser-local score
-    // would only be a copy free to disagree with it. Manual dials are likewise
-    // already recorded as call rows by /calls/manual, so there is no separate
-    // client-side log to keep.
-    notify(`Call logged as "${dispositions.find((d) => d.key === dispositionKey)?.label}".`, "success", {
-      title: "Disposition Submitted",
-    });
+
+    const dbName = REVERSE_DISPOSITION_MAP[dispositionKey] || dispositionKey;
+    const label = dispositions.find((d) => d.key === dbName)?.label || dbName;
+    const callId = activeCallId;
+
+    // The real write: calls.disposition, the lead's status/last_disposition,
+    // and (for a Do Not Call disposition) the shared DNC list, all happen
+    // server-side in one request. DID reputation is recalculated from the
+    // calls table this feeds, so there is no separate client-side score to
+    // keep in sync with it.
+    if (callId) {
+      callService.disposition(callId, dbName, notes || undefined).catch((err) => {
+        notify(err?.message || "Could not save the disposition — it may not have been recorded.", "error");
+      });
+    } else {
+      console.warn("[dialer] submitting disposition with no active call id — nothing will be recorded server-side.");
+    }
+
+    notify(`Call logged as "${label}".`, "success", { title: "Disposition Submitted" });
     setCallState("waiting");
     setCallSeconds(0);
     setWrapSeconds(0);
@@ -778,9 +859,6 @@ export default function AgentDashboard() {
     // Back to a blank contact so the next progressive call's lead (or the
     // next manual dial) starts clean rather than showing the previous one.
     setLead(buildEmptyLead());
-    // Only moves the needle when this disposition corresponds to a real
-    // backend call record (e.g. from an actual dialer-engine campaign) —
-    // the on-screen call simulation itself doesn't create one.
     refreshStats();
   };
 
@@ -917,6 +995,10 @@ export default function AgentDashboard() {
                 dialing={dialing}
                 registered={softphone.status === "registered"}
                 dialerState={dialerState}
+                parallelSettings={parallelSettings}
+                parallelStatus={parallelStatus}
+                onParallelDialsChange={handleParallelDialsChange}
+                statsToday={statsToday}
               />
             )}
 
@@ -1021,6 +1103,10 @@ function WaitingState({
   dialing,
   registered,
   dialerState,
+  parallelSettings,
+  parallelStatus,
+  onParallelDialsChange,
+  statsToday,
 }) {
   if (status === "manual_dial") {
     return (
@@ -1074,6 +1160,15 @@ function WaitingState({
         )}
       </div>
 
+      {parallelSettings?.parallel_dialing_enabled && (
+        <ParallelDialingPanel
+          parallelSettings={parallelSettings}
+          parallelStatus={parallelStatus}
+          onParallelDialsChange={onParallelDialsChange}
+          statsToday={statsToday}
+        />
+      )}
+
       <StatusSelector
         status={status}
         statusSince={statusSince}
@@ -1081,6 +1176,82 @@ function WaitingState({
         setStatusMenuOpen={setStatusMenuOpen}
         onStatusChange={onStatusChange}
       />
+    </div>
+  );
+}
+
+// The Parallel Dialing controls + live indicator, shown on the waiting
+// screen whenever the company has parallel dialing turned on. Three real,
+// server-backed things live here — none of it a client-side simulation:
+//   - Parallel Dials: this agent's own setting (GET/POST /agent/parallel-dials),
+//     options capped at the admin's configured maximum.
+//   - Active Calls: how many of the agent's current batch are still
+//     actually ringing right now (GET /agent/parallel-status, polled every
+//     2s) — reflects real open call rows, not the configured target.
+//   - Calls Made Today / Connected Today: the same real figures already
+//     shown in the stats panel, surfaced here too per spec.
+function ParallelDialingPanel({ parallelSettings, parallelStatus, onParallelDialsChange, statsToday }) {
+  const options = Array.from({ length: parallelSettings.max_parallel_dials || 5 }, (_, i) => i + 1);
+  const activeCalls = parallelStatus?.active_calls || 0;
+  const requested = parallelStatus?.requested_count || 0;
+
+  return (
+    <div className="w-full max-w-xs rounded-lg border border-[var(--color-border)] bg-white p-4 text-left">
+      <div className="mb-3 flex items-center justify-between">
+        <label className="text-xs font-medium text-[var(--color-text-secondary)]">Parallel Dials</label>
+        <select
+          value={parallelSettings.parallel_dials}
+          onChange={(e) => onParallelDialsChange(Number(e.target.value))}
+          className="input-field w-20 py-1 text-sm"
+        >
+          {options.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* The visual indicator: a phone icon with one pip per requested slot
+          in this batch, filled for a slot that's still actually ringing and
+          hollow once it has resolved — so it moves in real time as legs
+          answer, go to voicemail, or ring out, rather than just showing the
+          configured target the whole time. */}
+      <div className="mb-3 flex items-center gap-2">
+        <PhoneCall size={16} className={activeCalls > 0 ? "text-[var(--color-accent)]" : "text-[var(--color-text-tertiary)]"} />
+        <div className="flex items-center gap-1">
+          {requested > 0 ? (
+            Array.from({ length: requested }, (_, i) => (
+              <span
+                key={i}
+                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold transition-colors duration-300 ${
+                  i < activeCalls
+                    ? "animate-pulse-slow bg-[var(--color-accent)] text-white"
+                    : "bg-[var(--color-bg)] text-[var(--color-text-tertiary)]"
+                }`}
+              >
+                {i + 1}
+              </span>
+            ))
+          ) : (
+            <span className="text-xs text-[var(--color-text-tertiary)]">No active dials</span>
+          )}
+        </div>
+        {activeCalls > 0 && (
+          <span className="ml-1 text-xs font-medium text-[var(--color-accent)]">
+            {activeCalls} ACTIVE DIAL{activeCalls === 1 ? "" : "S"}
+          </span>
+        )}
+      </div>
+
+      <div className="flex gap-2 border-t border-[var(--color-border)] pt-3 text-center">
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">{statsToday?.calls ?? 0}</p>
+          <p className="text-[10px] text-[var(--color-text-tertiary)]">Calls Made Today</p>
+        </div>
+        <div className="flex-1 border-l border-[var(--color-border)]">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">{statsToday?.connects ?? 0}</p>
+          <p className="text-[10px] text-[var(--color-text-tertiary)]">Connected Today</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1426,12 +1597,64 @@ function DispositionButton({ d, selected, onClick, large = false }) {
 // old mock script used — so this renders real script text as-is (with
 // the same {agent_name}/{lead_name}/{location} substitution) instead of
 // simulating a structured outline the API doesn't provide.
+// Splits a script's raw content into named sections wherever it uses
+// Markdown-style headers (# or ##) — e.g. "## Opening", "## Objections".
+// This is deliberately just a split on the document's own headers rather
+// than a rewrite into a fixed schema: whatever section names and order the
+// uploaded script actually used are exactly what gets preserved and
+// navigated, nothing invented or reordered. A script with no headers at
+// all (every script in this system before this feature) comes back as one
+// unnamed section, so the panel still renders it exactly as before.
+function parseScriptSections(content) {
+  const text = content || "";
+  const headerRe = /^#{1,3}\s+(.+?)\s*$/;
+
+  const sections = [];
+  let current = { title: null, body: [] }; // text before the first header, if any
+  for (const line of text.split("\n")) {
+    const m = headerRe.exec(line);
+    if (m) {
+      sections.push(current);
+      current = { title: m[1], body: [] };
+    } else {
+      current.body.push(line);
+    }
+  }
+  sections.push(current);
+
+  return sections
+    .map((s) => ({ title: s.title, body: s.body.join("\n").trim() }))
+    .filter((s) => s.title || s.body); // drop an empty leading preamble
+}
+
 function ScriptPanel({ agentName, lead, script, loaded, expanded = false }) {
   const fill = (text) =>
     (text || "")
       .replaceAll("{agent_name}", agentName)
       .replaceAll("{lead_name}", lead.fullName)
       .replaceAll("{location}", `${lead.city}, ${lead.state}`);
+
+  const sections = script ? parseScriptSections(script.content) : [];
+  const hasNamedSections = sections.some((s) => s.title);
+  const [openSections, setOpenSections] = useState(null); // null = "everything open" (default)
+  // A different script (campaign switch, or the assigned one being changed)
+  // must not inherit stale collapsed/expanded indices from the last one.
+  useEffect(() => {
+    setOpenSections(null);
+  }, [script?.id]);
+  const isOpen = (i) => openSections === null || openSections.has(i);
+  const toggleSection = (i) => {
+    setOpenSections((prev) => {
+      const next = new Set(prev ?? sections.map((_, idx) => idx));
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+  const jumpTo = (i) => {
+    if (openSections !== null && !openSections.has(i)) toggleSection(i);
+    document.getElementById(`script-section-${i}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
     <div
@@ -1453,16 +1676,62 @@ function ScriptPanel({ agentName, lead, script, loaded, expanded = false }) {
 
       {loaded && script && (
         <>
-          <p className={`mb-3 font-semibold text-[var(--color-text-primary)] transition-all duration-300 ${expanded ? "text-lg" : "text-base"}`}>
-            {script.title}
-          </p>
-          <p
-            className={`whitespace-pre-wrap rounded-lg bg-[var(--color-bg)] p-4 leading-relaxed text-[var(--color-text-primary)] transition-all duration-300 ${
-              expanded ? "text-[17px]" : "text-[15px]"
-            }`}
-          >
-            {fill(script.content)}
-          </p>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className={`font-semibold text-[var(--color-text-primary)] transition-all duration-300 ${expanded ? "text-lg" : "text-base"}`}>
+              {script.title}
+            </p>
+            {hasNamedSections && (
+              <button
+                onClick={() => setOpenSections(openSections === null ? new Set() : null)}
+                className="shrink-0 text-xs font-medium text-[var(--color-accent)] hover:underline"
+              >
+                {openSections === null ? "Collapse all" : "Expand all"}
+              </button>
+            )}
+          </div>
+
+          {/* Jump nav — only worth showing once the script actually has more
+              than one named section to navigate between. */}
+          {hasNamedSections && sections.length > 1 && (
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {sections.map((s, i) =>
+                s.title ? (
+                  <button
+                    key={i}
+                    onClick={() => jumpTo(i)}
+                    className="pill border border-[var(--color-accent)]/25 bg-[var(--color-accent-tint)] text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)] hover:text-white"
+                  >
+                    {s.title}
+                  </button>
+                ) : null
+              )}
+            </div>
+          )}
+
+          <div className="space-y-2.5">
+            {sections.map((s, i) => (
+              <div key={i} id={`script-section-${i}`} className="overflow-hidden rounded-lg bg-[var(--color-bg)]">
+                {s.title && (
+                  <button
+                    onClick={() => toggleSection(i)}
+                    className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-semibold text-[var(--color-text-primary)] hover:bg-black/[0.02]"
+                  >
+                    {s.title}
+                    <ChevronDown size={14} className={`text-[var(--color-text-tertiary)] transition-transform duration-200 ${isOpen(i) ? "rotate-180" : ""}`} />
+                  </button>
+                )}
+                {isOpen(i) && s.body && (
+                  <p
+                    className={`whitespace-pre-wrap leading-relaxed text-[var(--color-text-primary)] transition-all duration-300 ${
+                      s.title ? "px-4 pb-4" : "p-4"
+                    } ${expanded ? "text-[17px]" : "text-[15px]"}`}
+                  >
+                    {fill(s.body)}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
         </>
       )}
     </div>
