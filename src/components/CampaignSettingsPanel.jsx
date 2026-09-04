@@ -5,6 +5,7 @@ import { useToast } from "../lib/ToastContext";
 import campaignService from "../services/campaignService";
 import smsService from "../services/smsService";
 import leadService from "../services/leadService";
+import CampaignDialerControl from "./CampaignDialerControl";
 
 const CHAR_LIMIT = 160;
 
@@ -180,6 +181,12 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
             addListId={addListId}
             setAddListId={setAddListId}
             onAssign={assignLeadList}
+          />
+
+          <CampaignDialerControl
+            campaignId={campaign.id}
+            mode={campaign.dialing_mode}
+            campaignStatus={campaign.status}
           />
         </div>
       )}

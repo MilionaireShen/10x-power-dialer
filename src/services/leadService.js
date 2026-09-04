@@ -9,6 +9,11 @@ const leadService = {
   assignList: (id, campaignId) =>
     api.patch(`/leads/lists/${id}`, { campaign_id: campaignId || null }).then((r) => r.data),
   deleteList: (id) => api.delete(`/leads/lists/${id}`).then((r) => r.data),
+  // Manual Dialer: find an existing lead by the number the agent typed.
+  // Normalises the input server-side and never creates a lead — returns
+  // { data: { lead: null, normalized } } cleanly when there is no match.
+  lookupByPhone: (phone) =>
+    api.get("/admin/leads/lookup", { params: { phone } }).then((r) => r.data),
 };
 
 export default leadService;

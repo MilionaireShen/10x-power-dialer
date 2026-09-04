@@ -27,6 +27,8 @@ import hotkeyService from "../services/hotkeyService";
 import scriptService from "../services/scriptService";
 import agentService from "../services/agentService";
 import callService from "../services/callService";
+import dialerService from "../services/dialerService";
+import leadService from "../services/leadService";
 import reportService from "../services/reportService";
 import { playDtmfTone, addedDtmfDigits } from "../lib/dtmf";
 
@@ -89,6 +91,78 @@ function buildManualDialLead(phone) {
     notes: "Manually dialed — no prior lead history on file.",
     customValues: {},
   };
+}
+
+// Turns the backend's hydrated-lead payload (GET /admin/leads/lookup or
+// GET /agent/current-call) into the flat shape this screen's panels read.
+// The lead's real id is carried through so a disposition, SMS or booked
+// appointment attaches to the actual lead record and its history — and
+// campaign/lead-list context is shown without ever being written back.
+function mapLeadFromApi(payload) {
+  const l = payload?.lead;
+  if (!l) return null;
+  const cf = l.custom_fields || {};
+  return {
+    id: l.id,
+    fullName: [l.first_name, l.last_name].filter(Boolean).join(" ") || "Unknown Contact",
+    phone: l.phone_number || "",
+    email: l.email || "",
+    street: l.street_address || "",
+    city: l.city || "",
+    state: l.state || "",
+    zip: l.zip_code || "",
+    timezone: l.timezone || "",
+    timesCalled: l.times_called ?? (payload.calls?.length || 0),
+    lastDisposition: l.last_disposition || "—",
+    notes: cf.notes || cf.note || "",
+    customValues: cf,
+    status: l.status || null,
+    campaignId: l.campaign_id || null,
+    campaignName: l.campaign?.name || null,
+    leadListName: l.lead_list?.name || null,
+    isDnc: Boolean(l.is_dnc || payload.dnc),
+    history: {
+      calls: payload.calls || [],
+      conversations: payload.conversations || [],
+      appointments: payload.appointments || [],
+    },
+  };
+}
+
+// The human-readable line the agent sees while no call is in progress.
+// Driven entirely by what the backend dialing engine reports — never a
+// client-side guess or timer.
+function dialerWaitingMessage(dialerState) {
+  if (!dialerState) {
+    return { title: "Checking campaign status…", hint: "Contacting the dialer.", tone: "info" };
+  }
+  const s = dialerState.state;
+  if (s === "running") {
+    return { title: "Campaign Running", hint: "You'll be connected automatically once the dialer has a call for you.", tone: "info" };
+  }
+  if (s === "waiting_for_agent") {
+    return { title: "Campaign Running", hint: "Waiting for an available agent slot — stay on Available.", tone: "info" };
+  }
+  if (s === "exhausted") {
+    return { title: "No Eligible Leads", hint: "Every lead in this campaign has been dialed or is not currently callable.", tone: "warning" };
+  }
+  if (s === "paused") {
+    return { title: "Campaign Paused", hint: "A manager has paused this campaign's dialer.", tone: "warning" };
+  }
+  if (s === "not_started") {
+    return { title: "Waiting for Campaign to Start", hint: "The dialer is ready but hasn't been started by a manager yet.", tone: "neutral" };
+  }
+  if (typeof s === "string" && s.startsWith("blocked_")) {
+    const reason = dialerState.blocked_reason || "";
+    if (s === "blocked_funds_ok") return { title: "Telephony Error", hint: reason, tone: "danger" };
+    if (s === "blocked_has_usable_did" || s === "blocked_telephony_configured") {
+      return { title: "Telephony Error", hint: reason, tone: "danger" };
+    }
+    if (s === "blocked_has_pending_leads") return { title: "No Eligible Leads", hint: reason, tone: "warning" };
+    if (s === "blocked_within_calling_hours") return { title: "Outside Calling Hours", hint: reason, tone: "warning" };
+    return { title: "Campaign Configuration Required", hint: reason, tone: "danger" };
+  }
+  return { title: "Waiting for Campaign to Start", hint: "You'll be connected automatically once the dialer has a call for you.", tone: "neutral" };
 }
 
 export default function AgentDashboard() {
@@ -214,6 +288,9 @@ export default function AgentDashboard() {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
 
   const [callState, setCallState] = useState("waiting"); // waiting | ringing | connected | wrapup
+  // Live state of this campaign's dialing engine (GET /dialer/status) —
+  // what the "waiting" screen shows instead of a static placeholder.
+  const [dialerState, setDialerState] = useState(null);
   const [callSeconds, setCallSeconds] = useState(0);
   const [wrapSeconds, setWrapSeconds] = useState(0);
   const [disposition, setDisposition] = useState(null);
@@ -486,6 +563,85 @@ export default function AgentDashboard() {
     return () => clearInterval(id);
   }, [sessionEnded]);
 
+  // Poll the real dialing-engine state while the agent is between calls and
+  // NOT in manual-dial mode. This is what replaces the old static
+  // "Waiting for campaign to start..." text with the engine's actual state
+  // (running / waiting for agent / no leads / paused / blocked + reason).
+  useEffect(() => {
+    const campaignId = activeCampaignId || campaign?.id;
+    if (sessionEnded || !campaignId || callState !== "waiting" || status === "manual_dial") {
+      return undefined;
+    }
+    let cancelled = false;
+    const load = () =>
+      dialerService
+        .status(campaignId)
+        .then((res) => {
+          if (!cancelled) setDialerState(res.data);
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [activeCampaignId, campaign?.id, callState, status, sessionEnded]);
+
+  // Poll for the dialer call this agent is currently on / being rung for, so
+  // a progressive-campaign call arrives with the real lead (name, address,
+  // history) already on screen. The softphone only carries audio — it never
+  // says who is being called. Manual calls are skipped here: handleDial
+  // already set that lead from the number the agent typed.
+  useEffect(() => {
+    if (sessionEnded || isManualCall) return undefined;
+    if (callState === "wrapup") return undefined;
+    let cancelled = false;
+    const load = () =>
+      agentService
+        .currentCall()
+        .then((res) => {
+          if (cancelled) return;
+          const payload = res?.data;
+          const call = payload?.call;
+          if (!call || call.call_type === "manual") return;
+          // The server's active call is the one to attach SMS / bookings to.
+          setActiveCallId(call.id);
+          const mapped = mapLeadFromApi(payload);
+          if (mapped) {
+            setLead((prev) => (prev?.id === mapped.id ? prev : mapped));
+          }
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionEnded, isManualCall, callState]);
+
+  // One-time sync of this agent's status from the server session on mount,
+  // so a status a supervisor set (or a reload mid-shift) is reflected rather
+  // than always starting at "available".
+  useEffect(() => {
+    let cancelled = false;
+    agentService
+      .heartbeat()
+      .then((res) => {
+        const serverStatus = res?.data?.status;
+        if (!cancelled && serverStatus && serverStatus !== "logged_out") {
+          setStatus(serverStatus);
+          noteOwnStatusChange(serverStatus);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleStatusChange = (key) => {
     setStatus(key);
     setStatusSince(Date.now());
@@ -525,7 +681,28 @@ export default function AgentDashboard() {
       notify("Softphone is not registered yet — please wait a moment and try again.", "warning");
       return;
     }
+    // Show a placeholder immediately, then look the number up against the
+    // lead database. If it already belongs to a lead, swap in that lead's
+    // full record (name, address, campaign, history) — matched on the
+    // server-normalised phone number so any format the agent types resolves.
+    // Never creates a lead, and never changes the matched lead's campaign.
     setLead(buildManualDialLead(trimmed));
+    leadService
+      .lookupByPhone(trimmed)
+      .then((res) => {
+        const mapped = mapLeadFromApi(res?.data);
+        if (mapped) {
+          setLead(mapped);
+          notify(
+            `Existing lead found: ${mapped.fullName}${mapped.campaignName ? ` · ${mapped.campaignName}` : ""}`,
+            "info",
+            { title: "Lead Recognised" }
+          );
+        }
+      })
+      .catch(() => {
+        // Lookup is best-effort — the dial still goes out with the placeholder.
+      });
     setIsManualCall(true);
     const bestDID = selectBestDID(campaign?.id, extractAreaCode(trimmed));
     if (bestDID) {
@@ -597,6 +774,10 @@ export default function AgentDashboard() {
     setScheduledCallbackAt(null);
     setIsManualCall(false);
     setActiveDIDId(null);
+    setActiveCallId(null);
+    // Back to a blank contact so the next progressive call's lead (or the
+    // next manual dial) starts clean rather than showing the previous one.
+    setLead(buildEmptyLead());
     // Only moves the needle when this disposition corresponds to a real
     // backend call record (e.g. from an actual dialer-engine campaign) —
     // the on-screen call simulation itself doesn't create one.
@@ -735,6 +916,7 @@ export default function AgentDashboard() {
                 onDial={handleDial}
                 dialing={dialing}
                 registered={softphone.status === "registered"}
+                dialerState={dialerState}
               />
             )}
 
@@ -838,6 +1020,7 @@ function WaitingState({
   onDial,
   dialing,
   registered,
+  dialerState,
 }) {
   if (status === "manual_dial") {
     return (
@@ -856,15 +1039,39 @@ function WaitingState({
     );
   }
 
+  const msg = dialerWaitingMessage(dialerState);
+  const dotColor =
+    msg.tone === "danger"
+      ? "var(--color-danger)"
+      : msg.tone === "warning"
+        ? "var(--color-warning)"
+        : "var(--color-info)";
+  const tintColor =
+    msg.tone === "danger"
+      ? "var(--color-danger-tint)"
+      : msg.tone === "warning"
+        ? "var(--color-warning-tint)"
+        : "var(--color-info-tint)";
+  const running = dialerState?.state === "running" || dialerState?.state === "waiting_for_agent";
+
   return (
     <div className="card flex flex-col items-center justify-center gap-4 py-16">
       <div className="relative flex h-24 w-24 items-center justify-center">
-        <span className="absolute inset-0 animate-pulse-slow rounded-full bg-[var(--color-info-tint)]" />
-        <span className="relative h-4 w-4 rounded-full bg-[var(--color-info)]" />
+        <span
+          className={`absolute inset-0 rounded-full ${running ? "animate-pulse-slow" : ""}`}
+          style={{ backgroundColor: tintColor }}
+        />
+        <span className="relative h-4 w-4 rounded-full" style={{ backgroundColor: dotColor }} />
       </div>
       <div className="text-center">
-        <p className="text-lg font-semibold text-[var(--color-text-primary)]">Waiting for campaign to start...</p>
-        <p className="text-sm text-[var(--color-text-tertiary)]">You'll be connected automatically once the dialer has a call for you</p>
+        <p className="text-lg font-semibold text-[var(--color-text-primary)]">{msg.title}</p>
+        <p className="mx-auto max-w-sm text-sm text-[var(--color-text-tertiary)]">{msg.hint}</p>
+        {dialerState && (dialerState.state === "running" || dialerState.state === "waiting_for_agent") && (
+          <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
+            {dialerState.leads_remaining?.toLocaleString?.() ?? dialerState.leads_remaining} leads remaining ·{" "}
+            {dialerState.agents_available} agent{dialerState.agents_available === 1 ? "" : "s"} available
+          </p>
+        )}
       </div>
 
       <StatusSelector
