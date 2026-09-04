@@ -34,6 +34,22 @@ const dialerService = {
 
   queue: (campaignId) =>
     api.get(`/dialer/queue/${campaignId}`).then((r) => r.data),
+
+  // Preview Dialing — always for the calling agent themselves. Fetches (or
+  // recovers, if one is already reserved) the lead the agent should be
+  // reviewing right now; never places a call. Pass skipLeadId to release
+  // the currently-reserved lead first (NEXT button) in the same round trip.
+  previewNext: (campaignId, skipLeadId) =>
+    api
+      .post("/dialer/preview/next", { campaign_id: campaignId, ...(skipLeadId ? { skip_lead_id: skipLeadId } : {}) })
+      .then((r) => r.data),
+
+  // Places the real outbound call for the lead currently reserved to this
+  // agent (DIAL button).
+  previewDial: (campaignId, leadId) =>
+    api
+      .post("/dialer/preview/dial", { campaign_id: campaignId, lead_id: leadId })
+      .then((r) => r.data),
 };
 
 export default dialerService;

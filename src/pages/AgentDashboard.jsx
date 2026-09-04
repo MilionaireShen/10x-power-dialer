@@ -811,6 +811,94 @@ export default function AgentDashboard() {
     });
   };
 
+  // Preview Dialing — the lead the agent is currently reviewing (not yet
+  // dialed), and the DIAL/NEXT actions on it. Deliberately separate from
+  // `lead`/`activeCallId` above: those represent a real call in progress
+  // (populated by the existing agent/current-call poll below once one
+  // exists), while this is the pre-dial review step that spec explicitly
+  // requires never create a call or count as an attempt.
+  const [previewLead, setPreviewLead] = useState(null);
+  const [previewMessage, setPreviewMessage] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewDialing, setPreviewDialing] = useState(false);
+  const isPreviewMode = campaign?.dialing_mode === "preview";
+
+  const loadPreviewLead = useCallback(
+    (skipLeadId) => {
+      if (!campaign?.id) return;
+      setPreviewLoading(true);
+      dialerService
+        .previewNext(campaign.id, skipLeadId)
+        .then((res) => {
+          const mapped = mapLeadFromApi(res?.data?.history);
+          setPreviewLead(mapped);
+          setPreviewMessage(mapped ? null : res?.data?.message || "No more leads available.");
+          if (mapped) setLead(mapped); // let the script panel's merge fields show the real lead while reviewing
+        })
+        .catch((err) => {
+          setPreviewLead(null);
+          setPreviewMessage(err?.message || "Could not load the next lead.");
+        })
+        .finally(() => setPreviewLoading(false));
+    },
+    [campaign?.id]
+  );
+
+  // Fetches once when Preview becomes the relevant thing to show — not
+  // polled, since the reservation stays valid until the agent acts and
+  // re-fetching on a timer would just be noise (and risk clobbering an
+  // in-flight review with a duplicate reservation).
+  useEffect(() => {
+    if (!isPreviewMode || status === "manual_dial" || callState !== "waiting") return;
+    if (!dialerState?.is_running) {
+      setPreviewLead(null);
+      setPreviewMessage(null);
+      return;
+    }
+    loadPreviewLead();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPreviewMode, status, callState, dialerState?.is_running, campaign?.id]);
+
+  // A dial attempt (successful or not) always ends the review step — reset
+  // so the next time "waiting" is reached (a fresh lead, or back from a
+  // completed call) starts clean rather than re-showing a stale flag.
+  useEffect(() => {
+    setPreviewDialing(false);
+  }, [callState]);
+
+  const handlePreviewNext = () => {
+    if (previewLoading) return;
+    loadPreviewLead(previewLead?.id);
+  };
+
+  const handlePreviewDial = () => {
+    if (!previewLead || previewDialing || previewLoading) return;
+    setPreviewDialing(true);
+    dialerService
+      .previewDial(campaign.id, previewLead.id)
+      .then((res) => {
+        const callId = res?.data?.call?.id;
+        if (callId) {
+          setActiveCallId(callId);
+          recording?.setCallContext?.({ callId, toNumber: previewLead.phone, direction: "outbound" });
+        }
+        // Nothing else to do here — the agent's own leg now rings via the
+        // same Telnyx-dialed-agent-leg path progressive mode already uses,
+        // surfaced by the existing IncomingCallPanel/softphone machinery,
+        // and the existing agent/current-call poll picks up the real call
+        // row (and its real, event-driven status) the moment it exists.
+      })
+      .catch((err) => {
+        notify(err?.message || "Unable to start call.", "error");
+        setPreviewDialing(false);
+        // The failed attempt already released the reservation server-side
+        // (see dialPreviewLead in dialingEngine.js) — this lead is no
+        // longer actually held for this agent, so refresh rather than
+        // leave a stale, no-longer-valid lead on screen.
+        loadPreviewLead();
+      });
+  };
+
   // The click just hangs up the real call — the bridge effect above is
   // what actually moves callState to "wrapup" once onCallHangup confirms
   // the session really ended.
@@ -999,6 +1087,13 @@ export default function AgentDashboard() {
                 parallelStatus={parallelStatus}
                 onParallelDialsChange={handleParallelDialsChange}
                 statsToday={statsToday}
+                isPreviewMode={isPreviewMode}
+                previewLead={previewLead}
+                previewMessage={previewMessage}
+                previewLoading={previewLoading}
+                previewDialing={previewDialing}
+                onPreviewDial={handlePreviewDial}
+                onPreviewNext={handlePreviewNext}
               />
             )}
 
@@ -1107,11 +1202,50 @@ function WaitingState({
   parallelStatus,
   onParallelDialsChange,
   statsToday,
+  isPreviewMode,
+  previewLead,
+  previewMessage,
+  previewLoading,
+  previewDialing,
+  onPreviewDial,
+  onPreviewNext,
 }) {
   if (status === "manual_dial") {
     return (
       <div className="space-y-5">
         <ManualDialCard value={manualDialNumber} onChange={onManualDialNumberChange} onDial={onDial} dialing={dialing} registered={registered} />
+        <div className="card flex flex-col items-center gap-3 py-6">
+          <StatusSelector
+            status={status}
+            statusSince={statusSince}
+            statusMenuOpen={statusMenuOpen}
+            setStatusMenuOpen={setStatusMenuOpen}
+            onStatusChange={onStatusChange}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Preview is agent-driven, not tick-driven — "you'll be connected
+  // automatically" (the generic message below) is simply false for this
+  // mode, so it gets its own card instead of that message whenever the
+  // campaign is actually running. A paused/stopped/not-started campaign
+  // still falls through to the exact same generic card every other mode
+  // uses — the reason text already explains that correctly.
+  const dialerRunning = dialerState?.state === "running" || dialerState?.state === "waiting_for_agent";
+  if (isPreviewMode && dialerRunning) {
+    return (
+      <div className="space-y-5">
+        <PreviewDialerCard
+          lead={previewLead}
+          message={previewMessage}
+          loading={previewLoading}
+          dialing={previewDialing}
+          onDial={onPreviewDial}
+          onNext={onPreviewNext}
+          registered={registered}
+        />
         <div className="card flex flex-col items-center gap-3 py-6">
           <StatusSelector
             status={status}
@@ -1176,6 +1310,70 @@ function WaitingState({
         setStatusMenuOpen={setStatusMenuOpen}
         onStatusChange={onStatusChange}
       />
+    </div>
+  );
+}
+
+// Preview Dialing's core screen: one lead, reviewed before the agent
+// decides to call it. `lead` is only ever the one currently reserved to
+// this agent (see getNextPreviewLead in dialingEngine.js) — never a list,
+// never preloaded ahead, matching spec's "one lead at a time" requirement.
+function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered }) {
+  const busy = loading || dialing;
+
+  if (!lead) {
+    return (
+      <div className="card flex flex-col items-center justify-center gap-3 py-16 text-center">
+        <PhoneCall size={32} className="text-[var(--color-text-tertiary)]" />
+        <p className="text-lg font-semibold text-[var(--color-text-primary)]">
+          {loading ? "Loading next lead…" : message || "No more leads available."}
+        </p>
+        {!loading && (
+          <p className="mx-auto max-w-sm text-sm text-[var(--color-text-tertiary)]">
+            {message === "No more leads available."
+              ? "Every lead in this campaign has been dialed, is on the Do Not Call list, or isn't currently callable."
+              : "Check back once the campaign is running."}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card space-y-5 py-8 text-center">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">Current Lead</p>
+        <p className="mt-1 text-2xl font-semibold text-[var(--color-text-primary)]">{lead.fullName}</p>
+        <p className="mt-1 text-lg text-[var(--color-text-secondary)]">{lead.phone || "No phone number on file"}</p>
+        {(lead.city || lead.state) && (
+          <p className="mt-1 flex items-center justify-center gap-1 text-sm text-[var(--color-text-tertiary)]">
+            <MapPin size={13} /> {[lead.city, lead.state].filter(Boolean).join(", ")}
+          </p>
+        )}
+        <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
+          Called {lead.timesCalled || 0}x · Last outcome: {lead.lastDisposition}
+        </p>
+      </div>
+
+      <div className="flex flex-col items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
+          {dialing ? "Calling…" : "Ready"}
+        </span>
+      </div>
+
+      <div className="mx-auto flex max-w-xs flex-col gap-3">
+        <button
+          onClick={onDial}
+          disabled={busy || !registered}
+          className="btn-purple flex items-center justify-center gap-2 py-3 text-base"
+          title={!registered ? "Softphone is not registered yet" : undefined}
+        >
+          <PhoneCall size={18} /> {dialing ? "Calling…" : "Dial"}
+        </button>
+        <button onClick={onNext} disabled={busy} className="btn-outline flex items-center justify-center gap-2 py-3 text-base">
+          Next <ChevronDown size={16} className="-rotate-90" />
+        </button>
+      </div>
     </div>
   );
 }
