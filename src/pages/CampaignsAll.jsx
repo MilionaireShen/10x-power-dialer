@@ -138,6 +138,7 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
   const { notify } = useToast();
   const [name, setName] = useState("");
   const [mode, setMode] = useState("predictive");
+  const [parallelDials, setParallelDials] = useState(3);
   const [wrapUp, setWrapUp] = useState(60);
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("21:00");
@@ -152,6 +153,7 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
   const reset = () => {
     setName("");
     setMode("predictive");
+    setParallelDials(3);
     setWrapUp(60);
     setAgentIds([]);
   };
@@ -166,6 +168,10 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
       await campaignService.create({
         name,
         dialing_mode: mode,
+        // Only meaningful for Parallel mode — sent regardless so switching a
+        // campaign to Parallel later already has a sane value in place, per
+        // the campaign's own default_parallel_dials column.
+        default_parallel_dials: parallelDials,
         wrapup_time_seconds: wrapUp,
         calling_hours_start: `${startTime}:00`,
         calling_hours_end: `${endTime}:00`,
@@ -212,6 +218,20 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
             })}
           </div>
         </Field>
+
+        {mode === "parallel" && (
+          <Field label="Parallel Dials Per Agent">
+            <select value={parallelDials} onChange={(e) => setParallelDials(Number(e.target.value))} className="input-field">
+              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+              How many of an agent's leads are dialed simultaneously — the first to answer connects, the rest end.
+              Still capped by the admin's maximum in Settings, and by an agent's own choice if they've set one.
+            </p>
+          </Field>
+        )}
 
         <Field label={`Wrap-Up Time — ${wrapUp}s`}>
           <input type="range" min={15} max={120} step={5} value={wrapUp} onChange={(e) => setWrapUp(Number(e.target.value))} className="w-full accent-[var(--color-accent)]" />

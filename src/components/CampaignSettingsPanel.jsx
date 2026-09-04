@@ -34,6 +34,8 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
   const [leadLists, setLeadLists] = useState([]);
   const [leadListBusy, setLeadListBusy] = useState(false);
   const [addListId, setAddListId] = useState("");
+  const [parallelDials, setParallelDials] = useState(3);
+  const [parallelDialsSaving, setParallelDialsSaving] = useState(false);
   const textareaRef = useRef(null);
 
   const loadLeadLists = useCallback(() => {
@@ -55,7 +57,21 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     setConfirmKeywords(joinKeywords(campaign.sms_confirmation_keywords));
     setDeclineKeywords(joinKeywords(campaign.sms_decline_keywords));
     setRescheduleKeywords(joinKeywords(campaign.sms_reschedule_keywords));
+    setParallelDials(campaign.default_parallel_dials || 3);
   }, [campaign]);
+
+  const saveParallelDials = async () => {
+    setParallelDialsSaving(true);
+    try {
+      await campaignService.update(campaign.id, { default_parallel_dials: parallelDials });
+      notify(`Parallel Dials set to ${parallelDials} for "${campaign.name}".`, "success", { title: "Campaign Updated" });
+      onSaved?.();
+    } catch (err) {
+      notify(err?.message || "Could not save Parallel Dials.", "error");
+    } finally {
+      setParallelDialsSaving(false);
+    }
+  };
 
   useEffect(() => {
     setAddListId("");
@@ -173,6 +189,29 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
             <Row label="Agents Assigned" value={campaign.agent_count} />
             <Row label="Wrap-Up Time" value={`${campaign.wrapup_time_seconds}s`} />
           </dl>
+
+          {campaign.dialing_mode === "parallel" && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+              <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Parallel Dials Per Agent</label>
+              <div className="flex items-center gap-2">
+                <select value={parallelDials} onChange={(e) => setParallelDials(Number(e.target.value))} className="input-field flex-1 py-1.5 text-sm">
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={saveParallelDials}
+                  disabled={parallelDialsSaving || parallelDials === (campaign.default_parallel_dials || 3)}
+                  className="btn-purple shrink-0 px-4 py-1.5 text-sm disabled:opacity-40"
+                >
+                  {parallelDialsSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+                Capped by the admin's maximum in Settings, and by an agent's own choice if they've set one.
+              </p>
+            </div>
+          )}
 
           <LeadListSection
             campaign={campaign}
