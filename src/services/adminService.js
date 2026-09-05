@@ -18,6 +18,9 @@ const adminService = {
   // that is where the rest of the platform reads them from.
   getCompany: () => api.get("/admin/company").then((r) => r.data),
   saveCompany: (payload) => api.put("/admin/company", payload).then((r) => r.data),
+  // Super-admin only: edit any company by id from the Companies overview.
+  // Updates the existing row in place — the company id never changes.
+  updateCompanyById: (id, payload) => api.put(`/admin/companies/${id}`, payload).then((r) => r.data),
 
   // ---- Callbacks ----
   listCallbacks: (params) => api.get("/admin/callbacks", { params }).then((r) => r.data),

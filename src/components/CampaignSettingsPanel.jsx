@@ -36,6 +36,8 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
   const [addListId, setAddListId] = useState("");
   const [parallelDials, setParallelDials] = useState(3);
   const [parallelDialsSaving, setParallelDialsSaving] = useState(false);
+  const [leadLayout, setLeadLayout] = useState("roofing");
+  const [leadLayoutSaving, setLeadLayoutSaving] = useState(false);
   const textareaRef = useRef(null);
 
   const loadLeadLists = useCallback(() => {
@@ -58,7 +60,21 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     setDeclineKeywords(joinKeywords(campaign.sms_decline_keywords));
     setRescheduleKeywords(joinKeywords(campaign.sms_reschedule_keywords));
     setParallelDials(campaign.default_parallel_dials || 3);
+    setLeadLayout(campaign.lead_layout || "roofing");
   }, [campaign]);
+
+  const saveLeadLayout = async () => {
+    setLeadLayoutSaving(true);
+    try {
+      await campaignService.update(campaign.id, { lead_layout: leadLayout });
+      notify(`Lead layout set to ${leadLayout} for "${campaign.name}".`, "success", { title: "Campaign Updated" });
+      onSaved?.();
+    } catch (err) {
+      notify(err?.response?.data?.message || err?.message || "Could not save the lead layout.", "error");
+    } finally {
+      setLeadLayoutSaving(false);
+    }
+  };
 
   const saveParallelDials = async () => {
     setParallelDialsSaving(true);
@@ -189,6 +205,27 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
             <Row label="Agents Assigned" value={campaign.agent_count} />
             <Row label="Wrap-Up Time" value={`${campaign.wrapup_time_seconds}s`} />
           </dl>
+
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Lead Layout</label>
+            <div className="flex items-center gap-2">
+              <select value={leadLayout} onChange={(e) => setLeadLayout(e.target.value)} className="input-field flex-1 py-1.5 text-sm">
+                <option value="roofing">Roofing (address, roof/property fields)</option>
+                <option value="vacation">Vacation (age, travel history)</option>
+              </select>
+              <button
+                onClick={saveLeadLayout}
+                disabled={leadLayoutSaving || leadLayout === (campaign.lead_layout || "roofing")}
+                className="btn-purple shrink-0 px-4 py-1.5 text-sm disabled:opacity-40"
+              >
+                {leadLayoutSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+              Controls which lead card agents see on the call screen for this campaign. Roofing leads and their
+              fields are never removed — this only changes what is shown.
+            </p>
+          </div>
 
           {campaign.dialing_mode === "parallel" && (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">

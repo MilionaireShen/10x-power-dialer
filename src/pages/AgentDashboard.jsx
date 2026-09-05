@@ -127,6 +127,10 @@ function mapLeadFromApi(payload) {
     lastDisposition: l.last_disposition || "—",
     notes: cf.notes || cf.note || "",
     customValues: cf,
+    // Vacation-campaign fields — null on roofing leads, which never display them.
+    age: l.age ?? null,
+    lastTravelDate: l.last_travel_date || "",
+    lastTravelDestination: l.last_travel_destination || "",
     status: l.status || null,
     campaignId: l.campaign_id || null,
     campaignName: l.campaign?.name || null,
@@ -1085,6 +1089,7 @@ export default function AgentDashboard() {
                 onParallelDialsChange={handleParallelDialsChange}
                 statsToday={statsToday}
                 dialingMode={campaign?.dialing_mode}
+                leadLayout={campaign?.lead_layout}
                 isPreviewMode={isPreviewMode}
                 previewLead={previewLead}
                 previewMessage={previewMessage}
@@ -1126,6 +1131,7 @@ export default function AgentDashboard() {
                 hotkeys={hotkeys}
                 dtmfInput={dtmfInput}
                 onDtmfInputChange={handleDtmfInputChange}
+                leadLayout={campaign?.lead_layout}
               />
             )}
 
@@ -1202,6 +1208,7 @@ function WaitingState({
   onParallelDialsChange,
   statsToday,
   dialingMode,
+  leadLayout,
   isPreviewMode,
   previewLead,
   previewMessage,
@@ -1242,6 +1249,7 @@ function WaitingState({
           onDial={onPreviewDial}
           onNext={onPreviewNext}
           registered={registered}
+          leadLayout={leadLayout}
         />
         <div className="card flex flex-col items-center gap-3 py-6">
           <StatusSelector
@@ -1315,7 +1323,7 @@ function WaitingState({
 // decides to call it. `lead` is only ever the one currently reserved to
 // this agent (see getNextPreviewLead in dialingEngine.js) — never a list,
 // never preloaded ahead, matching spec's "one lead at a time" requirement.
-function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered }) {
+function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered, leadLayout }) {
   const busy = loading || dialing;
 
   if (!lead) {
@@ -1340,17 +1348,39 @@ function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, re
     );
   }
 
+  const isVacation = leadLayout === "vacation";
+
   return (
     <div className="card space-y-5 py-8 text-center">
       <div>
         <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">Current Lead</p>
         <p className="mt-1 text-2xl font-semibold text-[var(--color-text-primary)]">{lead.fullName}</p>
-        <p className="mt-1 text-lg text-[var(--color-text-secondary)]">{lead.phone || "No phone number on file"}</p>
+        {isVacation && lead.age != null && (
+          <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">Age {lead.age}</p>
+        )}
         {(lead.city || lead.state) && (
           <p className="mt-1 flex items-center justify-center gap-1 text-sm text-[var(--color-text-tertiary)]">
             <MapPin size={13} /> {[lead.city, lead.state].filter(Boolean).join(", ")}
           </p>
         )}
+        <p className="mt-1 text-lg text-[var(--color-text-secondary)]">{lead.phone || "No phone number on file"}</p>
+
+        {isVacation && (lead.lastTravelDate || lead.lastTravelDestination) && (
+          <div className="mx-auto mt-3 max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-left">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Travel History</p>
+            {lead.lastTravelDate && (
+              <p className="mt-1 text-sm text-[var(--color-text-primary)]">
+                <span className="text-[var(--color-text-tertiary)]">Last traveled:</span> {lead.lastTravelDate}
+              </p>
+            )}
+            {lead.lastTravelDestination && (
+              <p className="mt-0.5 text-sm text-[var(--color-text-primary)]">
+                <span className="text-[var(--color-text-tertiary)]">Last destination:</span> {lead.lastTravelDestination}
+              </p>
+            )}
+          </div>
+        )}
+
         <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
           Called {lead.timesCalled || 0}x · Last outcome: {lead.lastDisposition}
         </p>
@@ -1563,7 +1593,9 @@ function ConnectedState({
   hotkeys,
   dtmfInput,
   onDtmfInputChange,
+  leadLayout,
 }) {
+  const isVacation = leadLayout === "vacation";
   const ringColor = getStatusVisual("on_call", callSeconds).color;
 
   return (
@@ -1586,8 +1618,21 @@ function ConnectedState({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <LeadField label="Full Name" value={lead.fullName} onChange={(v) => onUpdateField("fullName", v)} />
           <LeadField label="Phone Number" value={lead.phone} onChange={(v) => onUpdateField("phone", v)} />
-          <LeadField label="Email Address" value={lead.email} onChange={(v) => onUpdateField("email", v)} className="sm:col-span-2" />
+          {isVacation && (
+            <LeadField label="Age" value={lead.age ?? ""} onChange={(v) => onUpdateField("age", v)} />
+          )}
+          <LeadField label="Email Address" value={lead.email} onChange={(v) => onUpdateField("email", v)} className={isVacation ? "" : "sm:col-span-2"} />
         </div>
+
+        {isVacation && (
+          <>
+            <h3 className="mb-3 mt-5 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Travel History</h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <LeadField label="Last Traveled" value={lead.lastTravelDate} placeholder="e.g. June 2025" onChange={(v) => onUpdateField("lastTravelDate", v)} />
+              <LeadField label="Last Destination" value={lead.lastTravelDestination} placeholder="e.g. Cancun, Mexico" onChange={(v) => onUpdateField("lastTravelDestination", v)} />
+            </div>
+          </>
+        )}
 
         <div className="mb-3 mt-5 flex items-center justify-between">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Address Details</h3>

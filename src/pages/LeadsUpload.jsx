@@ -132,7 +132,8 @@ export default function LeadsUpload() {
                 <UploadCloud size={32} className="text-[var(--color-text-tertiary)]" />
                 <p className="text-base font-semibold text-[var(--color-text-primary)]">Drop your CSV here or click to browse</p>
                 <p className="text-sm text-[var(--color-text-tertiary)]">
-                  Header row with a phone column (phone_number / phone / mobile). Optional: first_name, last_name, email, street_address, city, state, zip_code.
+                  Header row with a phone column (phone_number / phone / mobile). Optional: first_name, last_name, full_name, email, street_address, city, state, zip_code.
+                  Vacation campaigns also read: age, last_traveled, last_travel_destination. Any missing optional column is just left blank — the import still succeeds.
                 </p>
               </>
             )}
