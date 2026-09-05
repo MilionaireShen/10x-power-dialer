@@ -64,7 +64,7 @@ export const ADMIN_NAV = [
     key: "campaigns",
     label: "Campaigns",
     icon: FolderKanban,
-    anyPermission: ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates"],
+    anyPermission: ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates", "can_edit_email_templates", "can_enable_email"],
     items: [
       { label: "All Campaigns", path: "/admin/campaigns/all" },
       { label: "Create New Campaign", path: "/admin/campaigns/all?create=1" },
@@ -72,6 +72,7 @@ export const ADMIN_NAV = [
       { label: "DNC List", path: "/admin/campaigns/dnc" },
       { label: "Scripts", path: "/admin/campaigns/scripts" },
       { label: "SMS Templates", path: "/admin/campaigns/sms-templates" },
+      { label: "Email Templates", path: "/admin/campaigns/email-templates" },
       { label: "Dispositions", path: "/admin/campaigns/dispositions" },
       { label: "Client Calendars", path: "/admin/campaigns/client-calendars" },
       { label: "DID Protection", path: "/admin/campaigns/did-protection" },

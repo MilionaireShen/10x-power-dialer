@@ -41,6 +41,7 @@ import CampaignsLeadLists from "./pages/CampaignsLeadLists";
 import CampaignsDnc from "./pages/CampaignsDnc";
 import CampaignsScripts from "./pages/CampaignsScripts";
 import CampaignsSmsTemplates from "./pages/CampaignsSmsTemplates";
+import CampaignsEmailTemplates from "./pages/CampaignsEmailTemplates";
 import CampaignsDispositions from "./pages/CampaignsDispositions";
 
 import LeadsSearch from "./pages/LeadsSearch";
@@ -187,6 +188,7 @@ export default function App() {
                 <Route path="admin/campaigns/dnc" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsDnc /></Admin>} />
                 <Route path="admin/campaigns/scripts" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsScripts /></Admin>} />
                 <Route path="admin/campaigns/sms-templates" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsSmsTemplates /></Admin>} />
+                <Route path="admin/campaigns/email-templates" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsEmailTemplates /></Admin>} />
                 <Route path="admin/campaigns/dispositions" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsDispositions /></Admin>} />
                 <Route path="admin/campaigns/client-calendars" element={<Admin anyPermission={CAMPAIGNS_PERMS}><Clients /></Admin>} />
                 <Route path="admin/campaigns/did-protection" element={<Admin anyPermission={CAMPAIGNS_PERMS}><DIDProtection /></Admin>} />

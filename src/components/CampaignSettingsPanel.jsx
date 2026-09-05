@@ -4,6 +4,7 @@ import SidePanel from "./SidePanel";
 import { useToast } from "../lib/ToastContext";
 import campaignService from "../services/campaignService";
 import smsService from "../services/smsService";
+import emailService from "../services/emailService";
 import leadService from "../services/leadService";
 import CampaignDialerControl from "./CampaignDialerControl";
 
@@ -38,6 +39,11 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
   const [parallelDialsSaving, setParallelDialsSaving] = useState(false);
   const [leadLayout, setLeadLayout] = useState("roofing");
   const [leadLayoutSaving, setLeadLayoutSaving] = useState(false);
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [emailDefaultTemplateId, setEmailDefaultTemplateId] = useState("");
+  const [emailPaymentLink, setEmailPaymentLink] = useState("");
+  const [emailTemplates, setEmailTemplates] = useState([]);
+  const [emailSaving, setEmailSaving] = useState(false);
   const textareaRef = useRef(null);
 
   const loadLeadLists = useCallback(() => {
@@ -61,7 +67,34 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     setRescheduleKeywords(joinKeywords(campaign.sms_reschedule_keywords));
     setParallelDials(campaign.default_parallel_dials || 3);
     setLeadLayout(campaign.lead_layout || "roofing");
+    setEmailEnabled(Boolean(campaign.email_enabled));
+    setEmailDefaultTemplateId(campaign.email_default_template_id || "");
+    setEmailPaymentLink(campaign.email_payment_link || "");
   }, [campaign]);
+
+  useEffect(() => {
+    if (!campaign) return;
+    emailService.listTemplates({ campaign_id: campaign.id })
+      .then((res) => setEmailTemplates(res?.data?.templates || []))
+      .catch(() => setEmailTemplates([]));
+  }, [campaign]);
+
+  const saveEmail = async () => {
+    setEmailSaving(true);
+    try {
+      await campaignService.update(campaign.id, {
+        email_enabled: emailEnabled,
+        email_default_template_id: emailDefaultTemplateId || null,
+        email_payment_link: emailPaymentLink.trim() || null,
+      });
+      notify(`Email settings saved for "${campaign.name}".`, "success", { title: "Campaign Updated" });
+      onSaved?.();
+    } catch (err) {
+      notify(err?.response?.data?.message || err?.message || "Could not save email settings.", "error");
+    } finally {
+      setEmailSaving(false);
+    }
+  };
 
   const saveLeadLayout = async () => {
     setLeadLayoutSaving(true);
@@ -194,6 +227,9 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
         </TabButton>
         <TabButton active={tab === "sms"} onClick={() => setTab("sms")}>
           SMS
+        </TabButton>
+        <TabButton active={tab === "email"} onClick={() => setTab("email")}>
+          Email
         </TabButton>
       </div>
 
@@ -381,6 +417,59 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
           </button>
           <p className="text-xs text-[var(--color-text-tertiary)]">
             Agents will only see the Send SMS button on campaigns where SMS is enabled.
+          </p>
+        </div>
+      )}
+
+      {tab === "email" && (
+        <div className="space-y-5">
+          <Toggle
+            label="Enable Email for this Campaign"
+            hint="Off by default — turn on per campaign"
+            value={emailEnabled}
+            onChange={setEmailEnabled}
+          />
+
+          {emailEnabled && (
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Default Email Template</label>
+                <select value={emailDefaultTemplateId} onChange={(e) => setEmailDefaultTemplateId(e.target.value)} className="input-field">
+                  <option value="">No default — agent picks a template</option>
+                  {emailTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}{t.is_active ? "" : " (inactive)"}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+                  Loads automatically when the agent clicks Email. They can switch to any other active template assigned to this campaign.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Default Stripe Payment Link</label>
+                <input
+                  value={emailPaymentLink}
+                  onChange={(e) => setEmailPaymentLink(e.target.value)}
+                  placeholder="https://buy.stripe.com/…"
+                  className="input-field font-mono text-sm"
+                />
+                <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+                  Fills the {"{{payment_link}}"} button in templates. The agent can override it per send for a specific package or customer.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-tertiary)]">
+                Manage the actual templates (HTML, variables, preview) under <span className="font-medium text-[var(--color-text-secondary)]">Campaigns → Email Templates</span>.
+                Only <span className="font-medium text-[var(--color-text-secondary)]">active</span> templates assigned to this campaign (or to all campaigns) appear for agents.
+              </div>
+            </>
+          )}
+
+          <button onClick={saveEmail} disabled={emailSaving} className="btn-purple w-full py-3">
+            {emailSaving ? "Saving…" : "Save Email Settings"}
+          </button>
+          <p className="text-xs text-[var(--color-text-tertiary)]">
+            Agents only see the Email button on campaigns where Email is enabled — and the backend enforces it too.
           </p>
         </div>
       )}

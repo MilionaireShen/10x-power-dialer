@@ -11,7 +11,7 @@ const TIMEZONES = ["America/Los_Angeles", "America/Denver", "America/Chicago", "
 
 export default function SettingsGeneral() {
   const { notify } = useToast();
-  const [form, setForm] = useState({ name: "", timezone: TIMEZONES[3] });
+  const [form, setForm] = useState({ name: "", timezone: TIMEZONES[3], email_sender_name: "", email_sender_address: "", email_reply_to: "" });
   const [baseline, setBaseline] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -24,7 +24,13 @@ export default function SettingsGeneral() {
       .then((res) => {
         if (cancelled) return;
         const c = res?.data?.company;
-        const next = { name: c?.name || "", timezone: c?.timezone || TIMEZONES[3] };
+        const next = {
+          name: c?.name || "",
+          timezone: c?.timezone || TIMEZONES[3],
+          email_sender_name: c?.email_sender_name || "",
+          email_sender_address: c?.email_sender_address || "",
+          email_reply_to: c?.email_reply_to || "",
+        };
         setForm(next);
         setBaseline(next);
       })
@@ -95,6 +101,43 @@ export default function SettingsGeneral() {
                   <option key={tz}>{tz}</option>
                 ))}
               </select>
+            </div>
+
+            <div className="border-t border-[var(--color-border)] pt-5">
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Email Sender</h3>
+              <p className="mb-3 mt-0.5 text-xs text-[var(--color-text-tertiary)]">
+                Used as the From address on emails agents send from the dialer. The address must be on a domain you have
+                verified in the Telnyx portal (Messaging → Email) — otherwise Telnyx will reject the send.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Sender Name</label>
+                  <input
+                    value={form.email_sender_name}
+                    onChange={(e) => setForm((f) => ({ ...f, email_sender_name: e.target.value }))}
+                    placeholder="Vacay Dealz Travel Team"
+                    className="input-field"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Sender Email Address</label>
+                  <input
+                    value={form.email_sender_address}
+                    onChange={(e) => setForm((f) => ({ ...f, email_sender_address: e.target.value }))}
+                    placeholder="deals@vacaydealz.com"
+                    className="input-field"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Reply-To Address <span className="font-normal text-[var(--color-text-tertiary)]">(optional)</span></label>
+                  <input
+                    value={form.email_reply_to}
+                    onChange={(e) => setForm((f) => ({ ...f, email_reply_to: e.target.value }))}
+                    placeholder="support@vacaydealz.com"
+                    className="input-field"
+                  />
+                </div>
+              </div>
             </div>
           </div>
         )}

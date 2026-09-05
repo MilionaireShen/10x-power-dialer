@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Check, MapPin, CalendarDays, AlertTriangle, RefreshCw } from "lucide-react";
+import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Mail, Check, MapPin, CalendarDays, AlertTriangle, RefreshCw } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
 import { useAgentLiveState } from "../lib/useAgentLiveState";
@@ -23,6 +23,7 @@ import { matchesBinding } from "../lib/hotkeys";
 import campaignService from "../services/campaignService";
 import smsService from "../services/smsService";
 import SmsConversation from "../components/SmsConversation";
+import EmailComposer from "../components/EmailComposer";
 import hotkeyService from "../services/hotkeyService";
 import scriptService from "../services/scriptService";
 import agentService from "../services/agentService";
@@ -337,6 +338,7 @@ export default function AgentDashboard() {
   // during it can be linked back to the recording and call history.
   const [activeCallId, setActiveCallId] = useState(null);
   const [smsOpen, setSmsOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
   const [smsSent, setSmsSent] = useState(false);
   const [smsNote, setSmsNote] = useState("");
   const [manualDialNumber, setManualDialNumber] = useState("");
@@ -1125,6 +1127,8 @@ export default function AgentDashboard() {
                 onEndCall={handleEndCall}
                 smsEnabled={Boolean(campaign?.sms_enabled)}
                 onOpenSms={() => setSmsOpen(true)}
+                emailEnabled={Boolean(campaign?.email_enabled)}
+                onOpenEmail={() => setEmailOpen(true)}
                 onViewProperty={handleViewProperty}
                 onOpenAvailability={() => setAvailabilityOpen(true)}
                 outboundNumber={phoneNumbers.find((d) => d.id === activeDIDId)?.number}
@@ -1178,6 +1182,20 @@ export default function AgentDashboard() {
           lead={lead}
           callId={activeCallId}
           onSent={() => setSmsSent(true)}
+        />
+      </SidePanel>
+
+      <SidePanel
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        title="Send Email"
+        subtitle="Call continues while you send this"
+      >
+        <EmailComposer
+          campaign={campaign}
+          lead={lead}
+          callId={activeCallId}
+          onSent={() => {}}
         />
       </SidePanel>
 
@@ -1587,6 +1605,8 @@ function ConnectedState({
   onEndCall,
   smsEnabled,
   onOpenSms,
+  emailEnabled,
+  onOpenEmail,
   onViewProperty,
   onOpenAvailability,
   outboundNumber,
@@ -1697,10 +1717,19 @@ function ConnectedState({
           />
         </div>
         <div className="mt-2.5 space-y-2">
-          {smsEnabled && (
-            <button onClick={onOpenSms} className="btn-outline w-full">
-              <MessageSquareText size={15} /> Send Confirmation SMS
-            </button>
+          {(smsEnabled || emailEnabled) && (
+            <div className={`grid gap-2 ${smsEnabled && emailEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
+              {smsEnabled && (
+                <button onClick={onOpenSms} className="btn-outline w-full">
+                  <MessageSquareText size={15} /> Text
+                </button>
+              )}
+              {emailEnabled && (
+                <button onClick={onOpenEmail} className="btn-outline w-full">
+                  <Mail size={15} /> Email
+                </button>
+              )}
+            </div>
           )}
           <button onClick={onOpenAvailability} className="btn-outline w-full">
             <CalendarDays size={15} /> Availability
