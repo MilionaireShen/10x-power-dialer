@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Check, MapPin, CalendarDays, AlertTriangle } from "lucide-react";
+import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Check, MapPin, CalendarDays, AlertTriangle, RefreshCw } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
 import { useAgentLiveState } from "../lib/useAgentLiveState";
@@ -628,7 +628,7 @@ export default function AgentDashboard() {
   // number the "N active dials" indicator shows. Polled quickly (2s) since
   // this is exactly the figure meant to visibly move as legs resolve.
   useEffect(() => {
-    if (sessionEnded || !parallelSettings.parallel_dialing_enabled) return undefined;
+    if (sessionEnded || !parallelSettings.parallel_dialing_enabled || campaign?.dialing_mode !== "parallel") return undefined;
     if (callState !== "waiting" || status === "manual_dial") {
       setParallelStatus({ active: false, active_calls: 0, requested_count: 0 });
       return undefined;
@@ -647,7 +647,7 @@ export default function AgentDashboard() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [sessionEnded, callState, status, parallelSettings.parallel_dialing_enabled]);
+  }, [sessionEnded, callState, status, parallelSettings.parallel_dialing_enabled, campaign?.dialing_mode]);
 
   const handleParallelDialsChange = (n) => {
     const prev = parallelSettings.parallel_dials;
@@ -847,17 +847,14 @@ export default function AgentDashboard() {
   // Fetches once when Preview becomes the relevant thing to show — not
   // polled, since the reservation stays valid until the agent acts and
   // re-fetching on a timer would just be noise (and risk clobbering an
-  // in-flight review with a duplicate reservation).
+  // in-flight review with a duplicate reservation). The backend decides
+  // whether a lead comes back or a "paused"/"no more leads" message —
+  // preview needs no manager Start, so there's nothing to gate on here.
   useEffect(() => {
     if (!isPreviewMode || status === "manual_dial" || callState !== "waiting") return;
-    if (!dialerState?.is_running) {
-      setPreviewLead(null);
-      setPreviewMessage(null);
-      return;
-    }
     loadPreviewLead();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPreviewMode, status, callState, dialerState?.is_running, campaign?.id]);
+  }, [isPreviewMode, status, callState, campaign?.id]);
 
   // A dial attempt (successful or not) always ends the review step — reset
   // so the next time "waiting" is reached (a fresh lead, or back from a
@@ -1087,6 +1084,7 @@ export default function AgentDashboard() {
                 parallelStatus={parallelStatus}
                 onParallelDialsChange={handleParallelDialsChange}
                 statsToday={statsToday}
+                dialingMode={campaign?.dialing_mode}
                 isPreviewMode={isPreviewMode}
                 previewLead={previewLead}
                 previewMessage={previewMessage}
@@ -1202,6 +1200,7 @@ function WaitingState({
   parallelStatus,
   onParallelDialsChange,
   statsToday,
+  dialingMode,
   isPreviewMode,
   previewLead,
   previewMessage,
@@ -1227,14 +1226,11 @@ function WaitingState({
     );
   }
 
-  // Preview is agent-driven, not tick-driven — "you'll be connected
-  // automatically" (the generic message below) is simply false for this
-  // mode, so it gets its own card instead of that message whenever the
-  // campaign is actually running. A paused/stopped/not-started campaign
-  // still falls through to the exact same generic card every other mode
-  // uses — the reason text already explains that correctly.
-  const dialerRunning = dialerState?.state === "running" || dialerState?.state === "waiting_for_agent";
-  if (isPreviewMode && dialerRunning) {
+  // Preview is agent-driven and needs no manager Start — it gets its own
+  // card (lead + DIAL + NEXT) whenever the selected campaign is a preview
+  // campaign. The card itself shows whatever the backend reports: the
+  // current lead, "no more leads", or "a manager has paused this campaign".
+  if (isPreviewMode) {
     return (
       <div className="space-y-5">
         <PreviewDialerCard
@@ -1294,7 +1290,7 @@ function WaitingState({
         )}
       </div>
 
-      {parallelSettings?.parallel_dialing_enabled && (
+      {parallelSettings?.parallel_dialing_enabled && dialingMode === "parallel" && (
         <ParallelDialingPanel
           parallelSettings={parallelSettings}
           parallelStatus={parallelStatus}
@@ -1322,18 +1318,22 @@ function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, re
   const busy = loading || dialing;
 
   if (!lead) {
+    const noMoreLeads = message === "No more leads available.";
     return (
       <div className="card flex flex-col items-center justify-center gap-3 py-16 text-center">
         <PhoneCall size={32} className="text-[var(--color-text-tertiary)]" />
         <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-          {loading ? "Loading next lead…" : message || "No more leads available."}
+          {loading ? "Loading next lead…" : message || "No lead loaded"}
         </p>
-        {!loading && (
+        {!loading && noMoreLeads && (
           <p className="mx-auto max-w-sm text-sm text-[var(--color-text-tertiary)]">
-            {message === "No more leads available."
-              ? "Every lead in this campaign has been dialed, is on the Do Not Call list, or isn't currently callable."
-              : "Check back once the campaign is running."}
+            Every lead in this campaign has been dialed, is on the Do Not Call list, or isn't currently callable.
           </p>
+        )}
+        {!loading && (
+          <button onClick={onNext} className="btn-outline mt-2 flex items-center gap-2">
+            <RefreshCw size={14} /> Check again
+          </button>
         )}
       </div>
     );
