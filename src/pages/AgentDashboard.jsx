@@ -1140,6 +1140,7 @@ export default function AgentDashboard() {
                   setDisposition(key);
                   if (key !== "callback") setScheduledCallbackAt(null);
                 }}
+                dispositions={dispositions}
                 notes={notes}
                 setNotes={setNotes}
                 onSubmit={handleSubmitDisposition}
@@ -1685,6 +1686,7 @@ function WrapupState({
   wrap,
   disposition,
   setDisposition,
+  dispositions,
   notes,
   setNotes,
   onSubmit,
