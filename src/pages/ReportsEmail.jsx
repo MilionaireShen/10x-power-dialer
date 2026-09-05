@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Mail, Search, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Mail, Search, X, ChevronLeft, ChevronRight, ShieldOff, Trash2, Plus } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import EmptyState from "../components/EmptyState";
 import { useToast } from "../lib/ToastContext";
@@ -62,17 +62,17 @@ export default function ReportsEmail() {
       <ScreenHeader category="Reports" title="Email Reports" />
       <div className="border-b border-[var(--color-border)] px-8">
         <div className="flex gap-1">
-          {["analytics", "activity"].map((t) => (
+          {[["analytics", "Analytics"], ["activity", "Activity"], ["suppressions", "Suppressions"]].map(([t, label]) => (
             <button key={t} onClick={() => setTab(t)}
-              className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium capitalize transition-colors ${tab === t ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-transparent text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"}`}>
-              {t}
+              className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${tab === t ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-transparent text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"}`}>
+              {label}
             </button>
           ))}
         </div>
       </div>
 
       <div className="space-y-4 p-8">
-        <div className="flex flex-wrap items-end gap-3">
+        {tab !== "suppressions" && <div className="flex flex-wrap items-end gap-3">
           <div className="flex gap-1.5">
             {RANGE_PRESETS.map((p) => (
               <button key={p.key} onClick={() => applyPreset(p.key)}
@@ -95,9 +95,11 @@ export default function ReportsEmail() {
           {tab === "activity" && (
             <Select label="Status" value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v }))} options={(options.statuses || []).map((s) => ({ value: s, label: s }))} />
           )}
-        </div>
+        </div>}
 
-        {tab === "analytics" ? <AnalyticsTab params={params} notify={notify} /> : <ActivityTab params={params} filters={filters} setFilters={setFilters} notify={notify} />}
+        {tab === "analytics" && <AnalyticsTab params={params} notify={notify} />}
+        {tab === "activity" && <ActivityTab params={params} filters={filters} setFilters={setFilters} notify={notify} />}
+        {tab === "suppressions" && <SuppressionsTab notify={notify} />}
       </div>
     </div>
   );
@@ -203,6 +205,120 @@ function BreakdownTable({ title, rows, nameKey }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+const SUPP_REASON = {
+  hard_bounce: "Hard bounce", complaint: "Spam complaint", unsubscribe: "Unsubscribed", manual: "Added manually",
+};
+
+function SuppressionsTab({ notify }) {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [reason, setReason] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await emailService.listSuppressions({ page, page_size: PAGE_SIZE, ...(search ? { search } : {}), ...(reason ? { reason } : {}) });
+      setRows(res?.data?.suppressions || []);
+      setTotal(res?.data?.total || 0);
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not load the suppression list.", "error");
+    } finally { setLoading(false); }
+  }, [page, search, reason, notify]);
+  useEffect(() => { load(); }, [load]);
+
+  const add = async (e) => {
+    e.preventDefault();
+    if (!newEmail.trim()) return;
+    setAdding(true);
+    try {
+      await emailService.addSuppression(newEmail.trim());
+      notify(`${newEmail.trim()} suppressed.`, "success");
+      setNewEmail("");
+      setPage(1); load();
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not add that address.", "error");
+    } finally { setAdding(false); }
+  };
+
+  const remove = async (row) => {
+    if (!window.confirm(`Allow emails to ${row.email} again? This removes it from the suppression list.`)) return;
+    try {
+      await emailService.removeSuppression(row.id);
+      notify(`${row.email} removed.`, "success");
+      load();
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not remove that entry.", "error");
+    }
+  };
+
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-[var(--color-text-tertiary)]">
+        Emails are never sent to an address on this list. Hard bounces, spam complaints and unsubscribes are added
+        automatically from Telnyx events; you can also add an address by hand, or remove one that was suppressed by mistake.
+      </p>
+
+      <form onSubmit={add} className="flex flex-wrap gap-2">
+        <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="address@example.com" className="input-field max-w-xs py-1.5 text-sm" />
+        <button type="submit" disabled={adding} className="btn-outline py-1.5 text-sm"><Plus size={13} /> Suppress address</button>
+        <div className="relative">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]" />
+          <input value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} placeholder="Search…" className="input-field py-1.5 pl-7 text-sm" />
+        </div>
+        <select value={reason} onChange={(e) => { setPage(1); setReason(e.target.value); }} className="input-field py-1.5 text-sm">
+          <option value="">All reasons</option>
+          {Object.entries(SUPP_REASON).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </form>
+
+      {loading ? (
+        <p className="text-sm text-[var(--color-text-tertiary)]">Loading…</p>
+      ) : rows.length === 0 ? (
+        <EmptyState icon={ShieldOff} title="Nothing suppressed" description="No addresses are blocked from receiving email." />
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--color-bg)] text-left text-[11px] uppercase text-[var(--color-text-tertiary)]">
+                <tr><th className="px-3 py-2">Email</th><th className="px-3 py-2">Reason</th><th className="px-3 py-2">Added</th><th className="px-3 py-2" /></tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} className="border-t border-[var(--color-border)]">
+                    <td className="px-3 py-2 text-[var(--color-text-primary)]">{r.email}</td>
+                    <td className="px-3 py-2 text-[var(--color-text-tertiary)]">{SUPP_REASON[r.reason] || r.reason}</td>
+                    <td className="px-3 py-2 text-[var(--color-text-tertiary)]">{when(r.created_at)}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => remove(r)} title="Remove" className="rounded p-1 text-[var(--color-text-tertiary)] hover:bg-[var(--color-danger-tint)] hover:text-[var(--color-danger)]">
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between text-xs text-[var(--color-text-tertiary)]">
+            <span>{total.toLocaleString()} addresses</span>
+            <div className="flex items-center gap-2">
+              <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded p-1 disabled:opacity-30"><ChevronLeft size={16} /></button>
+              <span>Page {page} of {pages}</span>
+              <button disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="rounded p-1 disabled:opacity-30"><ChevronRight size={16} /></button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

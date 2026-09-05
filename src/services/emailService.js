@@ -24,6 +24,11 @@ const emailService = {
   getMessage: (id) => api.get(`/email/messages/${id}`).then((r) => r.data),
   listForLead: (leadId) => api.get(`/email/lead/${leadId}`).then((r) => r.data),
   analytics: (params) => api.get("/email/analytics", { params }).then((r) => r.data),
+
+  // ---- Suppression list ----
+  listSuppressions: (params) => api.get("/email/suppressions", { params }).then((r) => r.data),
+  addSuppression: (email) => api.post("/email/suppressions", { email }).then((r) => r.data),
+  removeSuppression: (id) => api.delete(`/email/suppressions/${id}`).then((r) => r.data),
 };
 
 export default emailService;
