@@ -18,10 +18,12 @@ const emailService = {
   // ---- Sending (agent composer) ----
   send: (payload) => api.post("/email/send", payload).then((r) => r.data),
 
-  // ---- Activity ----
+  // ---- Activity + analytics ----
   listMessages: (params) => api.get("/email/messages", { params }).then((r) => r.data),
+  filterOptions: () => api.get("/email/messages/filter-options").then((r) => r.data),
   getMessage: (id) => api.get(`/email/messages/${id}`).then((r) => r.data),
   listForLead: (leadId) => api.get(`/email/lead/${leadId}`).then((r) => r.data),
+  analytics: (params) => api.get("/email/analytics", { params }).then((r) => r.data),
 };
 
 export default emailService;

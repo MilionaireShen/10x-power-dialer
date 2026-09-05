@@ -44,6 +44,8 @@ export const ADMIN_NAV = [
       "view_leadlist_performance",
       "listen_recordings",
       "download_recordings",
+      "can_view_email_activity",
+      "can_view_email_analytics",
     ],
     items: [
       { label: "Agent Performance", path: "/admin/reports/agent-performance" },
@@ -51,6 +53,7 @@ export const ADMIN_NAV = [
       { label: "Call Logs", path: "/admin/reports/call-logs" },
       { label: "Call Recordings", path: "/admin/reports/call-recordings" },
       { label: "SMS Logs", path: "/admin/reports/sms-logs" },
+      { label: "Email Reports", path: "/admin/reports/email" },
       { label: "Callback Reports", path: "/admin/reports/callback-reports" },
       { label: "Campaign Reports", path: "/admin/reports/campaign-reports" },
       { label: "Disposition Reports", path: "/admin/reports/disposition-reports" },

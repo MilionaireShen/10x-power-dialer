@@ -28,6 +28,7 @@ import ReportsProductivityLogs from "./pages/ReportsProductivityLogs";
 import ReportsCallLogs from "./pages/ReportsCallLogs";
 import ReportsCallRecordings from "./pages/ReportsCallRecordings";
 import ReportsSmsLogs from "./pages/ReportsSmsLogs";
+import ReportsEmail from "./pages/ReportsEmail";
 import SmsInbox from "./pages/SmsInbox";
 import ReportsCallbackReports from "./pages/ReportsCallbackReports";
 import ReportsCampaignReports from "./pages/ReportsCampaignReports";
@@ -89,6 +90,8 @@ const REPORTS_PERMS = [
   "view_leadlist_performance",
   "listen_recordings",
   "download_recordings",
+  "can_view_email_activity",
+  "can_view_email_analytics",
 ];
 const CAMPAIGNS_PERMS = ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates"];
 // The permissions the server actually checks on /sms/conversations, so the
@@ -175,6 +178,7 @@ export default function App() {
                 <Route path="admin/reports/call-logs" element={<Admin anyPermission={REPORTS_PERMS}><ReportsCallLogs /></Admin>} />
                 <Route path="admin/reports/call-recordings" element={<Admin anyPermission={REPORTS_PERMS}><ReportsCallRecordings /></Admin>} />
                 <Route path="admin/reports/sms-logs" element={<Admin anyPermission={REPORTS_PERMS}><ReportsSmsLogs /></Admin>} />
+                <Route path="admin/reports/email" element={<Admin anyPermission={REPORTS_PERMS}><ReportsEmail /></Admin>} />
                 <Route path="admin/reports/callback-reports" element={<Admin anyPermission={REPORTS_PERMS}><ReportsCallbackReports /></Admin>} />
                 <Route path="admin/reports/campaign-reports" element={<Admin anyPermission={REPORTS_PERMS}><ReportsCampaignReports /></Admin>} />
                 <Route path="admin/reports/disposition-reports" element={<Admin anyPermission={REPORTS_PERMS}><ReportsDispositionReports /></Admin>} />
