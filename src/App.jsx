@@ -28,6 +28,7 @@ import ReportsProductivityLogs from "./pages/ReportsProductivityLogs";
 import ReportsCallLogs from "./pages/ReportsCallLogs";
 import ReportsCallRecordings from "./pages/ReportsCallRecordings";
 import ReportsSmsLogs from "./pages/ReportsSmsLogs";
+import ReportsEmail from "./pages/ReportsEmail";
 import SmsInbox from "./pages/SmsInbox";
 import ReportsCallbackReports from "./pages/ReportsCallbackReports";
 import ReportsCampaignReports from "./pages/ReportsCampaignReports";
@@ -41,10 +42,12 @@ import CampaignsLeadLists from "./pages/CampaignsLeadLists";
 import CampaignsDnc from "./pages/CampaignsDnc";
 import CampaignsScripts from "./pages/CampaignsScripts";
 import CampaignsSmsTemplates from "./pages/CampaignsSmsTemplates";
+import CampaignsEmailTemplates from "./pages/CampaignsEmailTemplates";
 import CampaignsDispositions from "./pages/CampaignsDispositions";
 
 import LeadsSearch from "./pages/LeadsSearch";
 import LeadsUpload from "./pages/LeadsUpload";
+import LeadsLists from "./pages/LeadsLists";
 import LeadsHealth from "./pages/LeadsHealth";
 import LeadsCustomFields from "./pages/LeadsCustomFields";
 
@@ -87,6 +90,8 @@ const REPORTS_PERMS = [
   "view_leadlist_performance",
   "listen_recordings",
   "download_recordings",
+  "can_view_email_activity",
+  "can_view_email_analytics",
 ];
 const CAMPAIGNS_PERMS = ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates"];
 // The permissions the server actually checks on /sms/conversations, so the
@@ -173,6 +178,7 @@ export default function App() {
                 <Route path="admin/reports/call-logs" element={<Admin anyPermission={REPORTS_PERMS}><ReportsCallLogs /></Admin>} />
                 <Route path="admin/reports/call-recordings" element={<Admin anyPermission={REPORTS_PERMS}><ReportsCallRecordings /></Admin>} />
                 <Route path="admin/reports/sms-logs" element={<Admin anyPermission={REPORTS_PERMS}><ReportsSmsLogs /></Admin>} />
+                <Route path="admin/reports/email" element={<Admin anyPermission={REPORTS_PERMS}><ReportsEmail /></Admin>} />
                 <Route path="admin/reports/callback-reports" element={<Admin anyPermission={REPORTS_PERMS}><ReportsCallbackReports /></Admin>} />
                 <Route path="admin/reports/campaign-reports" element={<Admin anyPermission={REPORTS_PERMS}><ReportsCampaignReports /></Admin>} />
                 <Route path="admin/reports/disposition-reports" element={<Admin anyPermission={REPORTS_PERMS}><ReportsDispositionReports /></Admin>} />
@@ -186,6 +192,7 @@ export default function App() {
                 <Route path="admin/campaigns/dnc" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsDnc /></Admin>} />
                 <Route path="admin/campaigns/scripts" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsScripts /></Admin>} />
                 <Route path="admin/campaigns/sms-templates" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsSmsTemplates /></Admin>} />
+                <Route path="admin/campaigns/email-templates" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsEmailTemplates /></Admin>} />
                 <Route path="admin/campaigns/dispositions" element={<Admin anyPermission={CAMPAIGNS_PERMS}><CampaignsDispositions /></Admin>} />
                 <Route path="admin/campaigns/client-calendars" element={<Admin anyPermission={CAMPAIGNS_PERMS}><Clients /></Admin>} />
                 <Route path="admin/campaigns/did-protection" element={<Admin anyPermission={CAMPAIGNS_PERMS}><DIDProtection /></Admin>} />
@@ -193,6 +200,7 @@ export default function App() {
                 {/* Leads */}
                 <Route path="admin/leads/search" element={<Admin anyPermission={LEADS_PERMS}><LeadsSearch /></Admin>} />
                 <Route path="admin/leads/upload" element={<Admin anyPermission={LEADS_PERMS}><LeadsUpload /></Admin>} />
+                <Route path="admin/leads/lists" element={<Admin anyPermission={LEADS_PERMS}><LeadsLists /></Admin>} />
                 <Route path="admin/leads/health" element={<Admin anyPermission={LEADS_PERMS}><LeadsHealth /></Admin>} />
                 <Route path="admin/leads/custom-fields" element={<Admin anyPermission={LEADS_PERMS}><LeadsCustomFields /></Admin>} />
 

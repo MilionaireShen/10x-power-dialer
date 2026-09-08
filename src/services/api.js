@@ -47,8 +47,13 @@ function clearSessionAndRedirect(reason) {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  // Already on a login page: a stray 401 here (e.g. shared data loading before
+  // the user signs in) must not hard-navigate — that reloads the app and, if
+  // the same request fires on mount, loops forever.
+  const path = window.location.pathname;
+  if (path === "/agent/login" || path === "/admin/login" || path === "/superadmin/login") return;
   if (reason) localStorage.setItem(LOGOUT_REASON_KEY, reason);
-  const wasAgent = window.location.pathname.startsWith("/agent");
+  const wasAgent = path.startsWith("/agent");
   window.location.href = wasAgent ? "/agent/login" : "/admin/login";
 }
 

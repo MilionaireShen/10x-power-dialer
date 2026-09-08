@@ -1,7 +1,7 @@
 import { CalendarDays, Eye, AlertTriangle, Clock } from "lucide-react";
 import SidePanel from "./SidePanel";
 import { getClientAvailability } from "../lib/calendarAvailability";
-import { isValidCalendarUrl } from "../data/mockData";
+import { isValidCalendarUrl } from "../data/catalogues";
 
 // Read-only availability viewer. There is no click handler anywhere in this
 // component that creates, holds, or modifies a calendar event — it only

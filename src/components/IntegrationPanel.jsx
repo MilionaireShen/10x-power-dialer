@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Copy, RefreshCw, Loader2, CheckCircle2, XCircle, Send } from "lucide-react";
 import SidePanel from "./SidePanel";
-import { INTEGRATION_EVENTS, EXPORTABLE_REPORTS, generateWebhookUrl, isValidCalendarUrl } from "../data/mockData";
+import { INTEGRATION_EVENTS, EXPORTABLE_REPORTS, generateWebhookUrl, isValidCalendarUrl } from "../data/catalogues";
 import { useToast } from "../lib/ToastContext";
 
 // One SidePanel, four field sets — which one renders is driven entirely by

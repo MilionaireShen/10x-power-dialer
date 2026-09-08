@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Building2, RefreshCw } from "lucide-react";
+import { Building2, RefreshCw, Pencil } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import SidePanel from "../components/SidePanel";
 import EmptyState from "../components/EmptyState";
 import { useToast } from "../lib/ToastContext";
 import api from "../services/api";
+import adminService from "../services/adminService";
 
 // Companies on the platform, with what each one has actually done. The seat
 // counts, call volumes and campaign lists here are counted from real rows —
@@ -24,6 +25,9 @@ export default function Companies() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -41,6 +45,32 @@ export default function Companies() {
   }, [notify]);
 
   useEffect(() => { load(); }, [load]);
+
+  const openDetail = (c) => {
+    setDetail(c);
+    setEditing(false);
+    setNameDraft(c.name);
+  };
+
+  const saveName = async () => {
+    const next = nameDraft.trim();
+    if (!next) { notify("The company name cannot be empty.", "error"); return; }
+    if (next === detail.name) { setEditing(false); return; }
+    setSavingName(true);
+    try {
+      await adminService.updateCompanyById(detail.company_id, { name: next });
+      // Same company id — only the name changed. Update the row in place so
+      // the list and the open panel both reflect it without a full reload.
+      setCompanies((list) => list.map((c) => (c.company_id === detail.company_id ? { ...c, name: next } : c)));
+      setDetail((d) => ({ ...d, name: next }));
+      setEditing(false);
+      notify("Company name updated.", "success");
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not update the company name.", "error");
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   return (
     <div>
@@ -71,7 +101,7 @@ export default function Companies() {
           {companies.map((c) => (
             <button
               key={c.company_id}
-              onClick={() => setDetail(c)}
+              onClick={() => openDetail(c)}
               className="card relative text-left transition-shadow hover:shadow-md"
             >
               <div className="flex items-center gap-3">
@@ -107,6 +137,37 @@ export default function Companies() {
         subtitle="Activity in the current reporting period"
         widthClass="max-w-md"
       >
+        {detail && (
+          <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Company Name</label>
+            {editing ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  className="input-field flex-1 py-1.5 text-sm"
+                  autoFocus
+                />
+                <button onClick={saveName} disabled={savingName} className="btn-purple shrink-0 px-3 py-1.5 text-sm disabled:opacity-40">
+                  {savingName ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => { setEditing(false); setNameDraft(detail.name); }} className="btn-outline shrink-0 px-3 py-1.5 text-sm">
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-[var(--color-text-primary)]">{detail.name}</span>
+                <button onClick={() => setEditing(true)} className="btn-outline shrink-0 px-3 py-1 text-xs">
+                  <Pencil size={12} /> Edit
+                </button>
+              </div>
+            )}
+            <p className="mt-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+              Editing the name updates this company in place — the company ID and every campaign, agent and lead stay attached to it.
+            </p>
+          </div>
+        )}
         {detail && (
           <dl className="space-y-2 text-sm">
             <Row label="Users" value={detail.users} />

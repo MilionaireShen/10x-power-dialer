@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Lock, Plus, Trash2 } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import EmptyState from "../components/EmptyState";
-import { FIELD_TYPES } from "../data/mockData";
+import { FIELD_TYPES } from "../data/catalogues";
 import { useToast } from "../lib/ToastContext";
 import adminService from "../services/adminService";
 

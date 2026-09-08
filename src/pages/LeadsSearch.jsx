@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Search, Users, ChevronLeft, ChevronRight, X, Phone, MessageSquare, CalendarDays, Ban } from "lucide-react";
+import { Search, Users, ChevronLeft, ChevronRight, X, Phone, MessageSquare, CalendarDays, Ban, Mail } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import EmptyState from "../components/EmptyState";
 import SidePanel from "../components/SidePanel";
 import { useToast } from "../lib/ToastContext";
 import adminService from "../services/adminService";
+import emailService from "../services/emailService";
 
 const PAGE_SIZE = 25;
 const EMPTY = { search: "", lead_list_id: "", campaign_id: "", status: "", is_dnc: "" };
@@ -197,15 +198,19 @@ export default function LeadsSearch() {
 function LeadDetail({ leadId, onClose }) {
   const { notify } = useToast();
   const [data, setData] = useState(null);
+  const [emails, setEmails] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!leadId) { setData(null); return; }
+    if (!leadId) { setData(null); setEmails([]); return; }
     setLoading(true);
     adminService.leadDetail(leadId)
       .then((res) => setData(res?.data || null))
       .catch((err) => notify(err?.response?.data?.message || "Could not open that lead.", "error"))
       .finally(() => setLoading(false));
+    emailService.listForLead(leadId)
+      .then((res) => setEmails(res?.data?.emails || []))
+      .catch(() => setEmails([]));
   }, [leadId, notify]);
 
   if (!leadId) return null;
@@ -269,6 +274,39 @@ function LeadDetail({ leadId, onClose }) {
               ))}
           </Section>
 
+          <Section icon={Mail} title="Emails" count={emails.length}>
+            {emails.length === 0
+              ? <Empty>No emails sent to this lead.</Empty>
+              : emails.map((e) => (
+                <div key={e.id} className="border-b border-[var(--color-border)] py-2 text-xs last:border-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-medium text-[var(--color-text-primary)]">
+                      {e.email_type === "payment" ? "Payment Email — " : e.email_type === "information" ? "Information Email — " : ""}{e.subject}
+                    </span>
+                    <EmailStatusPill status={e.status} />
+                  </div>
+                  <p className="mt-0.5 text-[var(--color-text-tertiary)]">
+                    {e.template?.name ? `${e.template.name} · ` : ""}
+                    {e.sent_at ? new Date(e.sent_at).toLocaleString() : new Date(e.created_at).toLocaleString()}
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-[var(--color-text-tertiary)]">
+                    {e.delivered_at && <span>Delivered {new Date(e.delivered_at).toLocaleTimeString()}</span>}
+                    {e.first_opened_at && <span>Opened {new Date(e.first_opened_at).toLocaleTimeString()}{e.open_count > 1 ? ` (${e.open_count}×)` : ""}</span>}
+                    {e.first_clicked_at && <span>Clicked {new Date(e.first_clicked_at).toLocaleTimeString()}{e.click_count > 1 ? ` (${e.click_count}×)` : ""}</span>}
+                    {e.payment_link_first_clicked_at && (
+                      <span className="font-medium text-[var(--color-success)]">
+                        Stripe payment link clicked {new Date(e.payment_link_first_clicked_at).toLocaleTimeString()}
+                        {e.payment_link_click_count > 1 ? ` (${e.payment_link_click_count}×)` : ""}
+                      </span>
+                    )}
+                    {e.bounced_at && <span className="text-[var(--color-danger)]">Bounced</span>}
+                    {e.failed_at && <span className="text-[var(--color-danger)]">Failed{e.failed_reason ? ` — ${e.failed_reason}` : ""}</span>}
+                    {e.payment_link && !e.payment_link_first_clicked_at && <span>Payment link included</span>}
+                  </div>
+                </div>
+              ))}
+          </Section>
+
           <Section icon={CalendarDays} title="Appointments" count={data.appointments.length}>
             {data.appointments.length === 0
               ? <Empty>No appointments booked.</Empty>
@@ -300,6 +338,24 @@ function Section({ icon: Icon, title, count, children }) {
 
 function Empty({ children }) {
   return <p className="py-3 text-xs text-[var(--color-text-tertiary)]">{children}</p>;
+}
+
+const EMAIL_STATUS = {
+  queued: ["Queued", "info"], sent: ["Sent", "info"], delivered: ["Delivered", "success"],
+  opened: ["Opened", "success"], clicked: ["Clicked", "success"],
+  bounced: ["Bounced", "danger"], failed: ["Failed", "danger"], deferred: ["Deferred", "warning"],
+  unsubscribed: ["Unsubscribed", "warning"], complained: ["Spam complaint", "danger"],
+};
+function EmailStatusPill({ status }) {
+  const [label, tone] = EMAIL_STATUS[status] || [status || "—", "info"];
+  return (
+    <span
+      className="pill shrink-0"
+      style={{ backgroundColor: `var(--color-${tone}-tint)`, color: `var(--color-${tone})` }}
+    >
+      {label}
+    </span>
+  );
 }
 
 function Row({ label, value }) {

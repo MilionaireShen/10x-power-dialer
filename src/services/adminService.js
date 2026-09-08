@@ -13,11 +13,62 @@ const adminService = {
   getSettings: () => api.get("/admin/settings").then((r) => r.data),
   saveSettings: (settings) => api.put("/admin/settings", { settings }).then((r) => r.data),
 
+  // ---- Company profile ----
+  // Name and timezone live on the company record, not in settings, because
+  // that is where the rest of the platform reads them from.
+  getCompany: () => api.get("/admin/company").then((r) => r.data),
+  saveCompany: (payload) => api.put("/admin/company", payload).then((r) => r.data),
+  // Super-admin only: edit any company by id from the Companies overview.
+  // Updates the existing row in place — the company id never changes.
+  updateCompanyById: (id, payload) => api.put(`/admin/companies/${id}`, payload).then((r) => r.data),
+
+  // ---- Callbacks ----
+  listCallbacks: (params) => api.get("/admin/callbacks", { params }).then((r) => r.data),
+  dueCallbacks: () => api.get("/admin/callbacks/due").then((r) => r.data),
+  createCallback: (payload) => api.post("/admin/callbacks", payload).then((r) => r.data),
+  updateCallback: (id, payload) => api.patch(`/admin/callbacks/${id}`, payload).then((r) => r.data),
+  deleteCallback: (id) => api.delete(`/admin/callbacks/${id}`).then((r) => r.data),
+
+  // ---- Report exports ----
+  exportCatalogue: () => api.get("/admin/exports/catalogue").then((r) => r.data),
+  listExports: () => api.get("/admin/exports").then((r) => r.data),
+  createExport: (payload) => api.post("/admin/exports", payload).then((r) => r.data),
+  deleteExport: (id) => api.delete(`/admin/exports/${id}`).then((r) => r.data),
+  // Returned as a path rather than fetched, so the browser downloads the file
+  // through a normal navigation instead of buffering it in memory.
+  exportDownloadUrl: (id) => `${api.defaults.baseURL}/admin/exports/${id}/download`,
+  downloadExport: (id) => api.get(`/admin/exports/${id}/download`, { responseType: "blob" }).then((r) => r.data),
+
+  // ---- Knowledge base ----
+  listKnowledge: (params) => api.get("/admin/knowledge", { params }).then((r) => r.data),
+  listAllKnowledge: () => api.get("/admin/knowledge/all").then((r) => r.data),
+  createArticle: (payload) => api.post("/admin/knowledge", payload).then((r) => r.data),
+  updateArticle: (id, payload) => api.patch(`/admin/knowledge/${id}`, payload).then((r) => r.data),
+  deleteArticle: (id) => api.delete(`/admin/knowledge/${id}`).then((r) => r.data),
+
+  // ---- Agent supervision ----
+  // The caller's own session — polled by the agent screen so a supervisor's
+  // status change or forced logout actually reaches them.
+  mySession: () => api.get("/admin/my-session").then((r) => r.data),
+  agentInbox: () => api.get("/admin/agent-messages").then((r) => r.data),
+  messageAgent: (payload) => api.post("/admin/agent-messages", payload).then((r) => r.data),
+  markMessageRead: (id) => api.post(`/admin/agent-messages/${id}/read`).then((r) => r.data),
+  agentLogouts: (params) => api.get("/admin/agent-logouts", { params }).then((r) => r.data),
+  forceAgentStatus: (agentId, status) =>
+    api.post(`/admin/agent-status/${agentId}`, { status }).then((r) => r.data),
+  forceLogout: (sessionId) => api.post(`/admin/sessions/${sessionId}/force-logout`).then((r) => r.data),
+  forceLogoutAgent: (agentId) => api.post(`/admin/agent-logout/${agentId}`).then((r) => r.data),
+
+  // ---- Broadcasts ----
+  listBroadcasts: () => api.get("/admin/broadcasts").then((r) => r.data),
+  sendBroadcast: (payload) => api.post("/admin/broadcasts", payload).then((r) => r.data),
+
   // ---- Clients and calendars ----
   listClients: () => api.get("/admin/clients").then((r) => r.data),
   createClient: (payload) => api.post("/admin/clients", payload).then((r) => r.data),
   updateClient: (id, payload) => api.patch(`/admin/clients/${id}`, payload).then((r) => r.data),
   deleteClient: (id) => api.delete(`/admin/clients/${id}`).then((r) => r.data),
+  testCalendarUrl: (url) => api.post("/admin/clients/test-calendar", { url }).then((r) => r.data),
 
   // ---- Dispositions ----
   createDisposition: (payload) => api.post("/admin/dispositions", payload).then((r) => r.data),

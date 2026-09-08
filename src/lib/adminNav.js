@@ -44,6 +44,8 @@ export const ADMIN_NAV = [
       "view_leadlist_performance",
       "listen_recordings",
       "download_recordings",
+      "can_view_email_activity",
+      "can_view_email_analytics",
     ],
     items: [
       { label: "Agent Performance", path: "/admin/reports/agent-performance" },
@@ -51,6 +53,7 @@ export const ADMIN_NAV = [
       { label: "Call Logs", path: "/admin/reports/call-logs" },
       { label: "Call Recordings", path: "/admin/reports/call-recordings" },
       { label: "SMS Logs", path: "/admin/reports/sms-logs" },
+      { label: "Email Reports", path: "/admin/reports/email" },
       { label: "Callback Reports", path: "/admin/reports/callback-reports" },
       { label: "Campaign Reports", path: "/admin/reports/campaign-reports" },
       { label: "Disposition Reports", path: "/admin/reports/disposition-reports" },
@@ -64,7 +67,7 @@ export const ADMIN_NAV = [
     key: "campaigns",
     label: "Campaigns",
     icon: FolderKanban,
-    anyPermission: ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates"],
+    anyPermission: ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates", "can_edit_email_templates", "can_enable_email"],
     items: [
       { label: "All Campaigns", path: "/admin/campaigns/all" },
       { label: "Create New Campaign", path: "/admin/campaigns/all?create=1" },
@@ -72,6 +75,7 @@ export const ADMIN_NAV = [
       { label: "DNC List", path: "/admin/campaigns/dnc" },
       { label: "Scripts", path: "/admin/campaigns/scripts" },
       { label: "SMS Templates", path: "/admin/campaigns/sms-templates" },
+      { label: "Email Templates", path: "/admin/campaigns/email-templates" },
       { label: "Dispositions", path: "/admin/campaigns/dispositions" },
       { label: "Client Calendars", path: "/admin/campaigns/client-calendars" },
       { label: "DID Protection", path: "/admin/campaigns/did-protection" },
@@ -85,6 +89,7 @@ export const ADMIN_NAV = [
     items: [
       { label: "Lead Search", path: "/admin/leads/search" },
       { label: "Upload Leads", path: "/admin/leads/upload" },
+      { label: "Lead Lists", path: "/admin/leads/lists" },
       { label: "Lead List Health", path: "/admin/leads/health" },
       { label: "Custom Fields", path: "/admin/leads/custom-fields" },
     ],

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Zap, BatteryCharging, ArrowRightCircle, Search } from "lucide-react";
+import { Plus, Zap, BatteryCharging, ArrowRightCircle, Search, Layers } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import SidePanel from "../components/SidePanel";
 import CampaignSettingsPanel from "../components/CampaignSettingsPanel";
@@ -10,6 +10,7 @@ import userService from "../services/userService";
 
 const DIALING_MODES = [
   { key: "predictive", icon: Zap, title: "Predictive", description: "Maximum volume — algorithm dials multiple numbers ahead per agent." },
+  { key: "parallel", icon: Layers, title: "Parallel", description: "Each agent's own leads dialed simultaneously — the first to answer connects, the rest end." },
   { key: "power", icon: BatteryCharging, title: "Power", description: "Preset number of lines dialed per agent simultaneously." },
   { key: "progressive", icon: ArrowRightCircle, title: "Progressive", description: "Automatically dials the next call the moment the previous one ends." },
   { key: "preview", icon: Search, title: "Preview", description: "Agent reviews the full lead profile before the call launches." },
@@ -137,6 +138,7 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
   const { notify } = useToast();
   const [name, setName] = useState("");
   const [mode, setMode] = useState("predictive");
+  const [parallelDials, setParallelDials] = useState(3);
   const [wrapUp, setWrapUp] = useState(60);
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("21:00");
@@ -151,6 +153,7 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
   const reset = () => {
     setName("");
     setMode("predictive");
+    setParallelDials(3);
     setWrapUp(60);
     setAgentIds([]);
   };
@@ -165,6 +168,10 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
       await campaignService.create({
         name,
         dialing_mode: mode,
+        // Only meaningful for Parallel mode — sent regardless so switching a
+        // campaign to Parallel later already has a sane value in place, per
+        // the campaign's own default_parallel_dials column.
+        default_parallel_dials: parallelDials,
         wrapup_time_seconds: wrapUp,
         calling_hours_start: `${startTime}:00`,
         calling_hours_end: `${endTime}:00`,
@@ -212,6 +219,20 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
           </div>
         </Field>
 
+        {mode === "parallel" && (
+          <Field label="Parallel Dials Per Agent">
+            <select value={parallelDials} onChange={(e) => setParallelDials(Number(e.target.value))} className="input-field">
+              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+              How many of an agent's leads are dialed simultaneously — the first to answer connects, the rest end.
+              Still capped by the admin's maximum in Settings, and by an agent's own choice if they've set one.
+            </p>
+          </Field>
+        )}
+
         <Field label={`Wrap-Up Time — ${wrapUp}s`}>
           <input type="range" min={15} max={120} step={5} value={wrapUp} onChange={(e) => setWrapUp(Number(e.target.value))} className="w-full accent-[var(--color-accent)]" />
           <div className="flex justify-between text-[11px] text-[var(--color-text-tertiary)]">
@@ -254,7 +275,7 @@ function CreateCampaignPanel({ open, onClose, agents, onCreated }) {
         </Field>
 
         <p className="text-xs text-[var(--color-text-tertiary)]">
-          Lead lists and call scripts are attached to a campaign after it's created (via Lead List Manager and Campaign Scripts).
+          Assign lead lists after the campaign is created — from Edit → General → Lead Lists, or from Leads → Lead Lists.
         </p>
 
         <button onClick={save} disabled={saving} className="btn-purple w-full py-3">

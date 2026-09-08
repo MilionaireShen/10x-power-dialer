@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import SidePanel from "./SidePanel";
 import { useToast } from "../lib/ToastContext";
 import campaignService from "../services/campaignService";
 import smsService from "../services/smsService";
+import emailService from "../services/emailService";
+import leadService from "../services/leadService";
+import CampaignDialerControl from "./CampaignDialerControl";
 
 const CHAR_LIMIT = 160;
 
@@ -28,7 +32,28 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
   const [variables, setVariables] = useState([]);
   const [preview, setPreview] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [leadLists, setLeadLists] = useState([]);
+  const [leadListBusy, setLeadListBusy] = useState(false);
+  const [addListId, setAddListId] = useState("");
+  const [parallelDials, setParallelDials] = useState(3);
+  const [parallelDialsSaving, setParallelDialsSaving] = useState(false);
+  const [leadLayout, setLeadLayout] = useState("roofing");
+  const [leadLayoutSaving, setLeadLayoutSaving] = useState(false);
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [emailDefaultTemplateId, setEmailDefaultTemplateId] = useState("");
+  const [emailInformationTemplateId, setEmailInformationTemplateId] = useState("");
+  const [emailPaymentTemplateId, setEmailPaymentTemplateId] = useState("");
+  const [emailPaymentLink, setEmailPaymentLink] = useState("");
+  const [emailTemplates, setEmailTemplates] = useState([]);
+  const [emailSaving, setEmailSaving] = useState(false);
   const textareaRef = useRef(null);
+
+  const loadLeadLists = useCallback(() => {
+    if (!campaign) return;
+    leadService.listLists()
+      .then((res) => setLeadLists(res?.data || []))
+      .catch(() => { /* the Lead Lists section just shows empty */ });
+  }, [campaign]);
 
   useEffect(() => {
     if (!campaign) return;
@@ -42,7 +67,71 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     setConfirmKeywords(joinKeywords(campaign.sms_confirmation_keywords));
     setDeclineKeywords(joinKeywords(campaign.sms_decline_keywords));
     setRescheduleKeywords(joinKeywords(campaign.sms_reschedule_keywords));
+    setParallelDials(campaign.default_parallel_dials || 3);
+    setLeadLayout(campaign.lead_layout || "roofing");
+    setEmailEnabled(Boolean(campaign.email_enabled));
+    setEmailDefaultTemplateId(campaign.email_default_template_id || "");
+    setEmailInformationTemplateId(campaign.email_information_template_id || "");
+    setEmailPaymentTemplateId(campaign.email_payment_template_id || "");
+    setEmailPaymentLink(campaign.email_payment_link || "");
   }, [campaign]);
+
+  useEffect(() => {
+    if (!campaign) return;
+    emailService.listTemplates({ campaign_id: campaign.id })
+      .then((res) => setEmailTemplates(res?.data?.templates || []))
+      .catch(() => setEmailTemplates([]));
+  }, [campaign]);
+
+  const saveEmail = async () => {
+    setEmailSaving(true);
+    try {
+      await campaignService.update(campaign.id, {
+        email_enabled: emailEnabled,
+        email_default_template_id: emailDefaultTemplateId || null,
+        email_information_template_id: emailInformationTemplateId || null,
+        email_payment_template_id: emailPaymentTemplateId || null,
+        email_payment_link: emailPaymentLink.trim() || null,
+      });
+      notify(`Email settings saved for "${campaign.name}".`, "success", { title: "Campaign Updated" });
+      onSaved?.();
+    } catch (err) {
+      notify(err?.response?.data?.message || err?.message || "Could not save email settings.", "error");
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+
+  const saveLeadLayout = async () => {
+    setLeadLayoutSaving(true);
+    try {
+      await campaignService.update(campaign.id, { lead_layout: leadLayout });
+      notify(`Lead layout set to ${leadLayout} for "${campaign.name}".`, "success", { title: "Campaign Updated" });
+      onSaved?.();
+    } catch (err) {
+      notify(err?.response?.data?.message || err?.message || "Could not save the lead layout.", "error");
+    } finally {
+      setLeadLayoutSaving(false);
+    }
+  };
+
+  const saveParallelDials = async () => {
+    setParallelDialsSaving(true);
+    try {
+      await campaignService.update(campaign.id, { default_parallel_dials: parallelDials });
+      notify(`Parallel Dials set to ${parallelDials} for "${campaign.name}".`, "success", { title: "Campaign Updated" });
+      onSaved?.();
+    } catch (err) {
+      notify(err?.message || "Could not save Parallel Dials.", "error");
+    } finally {
+      setParallelDialsSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    setAddListId("");
+    loadLeadLists();
+  }, [loadLeadLists]);
 
   useEffect(() => {
     if (!campaign) return;
@@ -89,6 +178,24 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     });
   };
 
+  // Lead-list assignment goes through the same PATCH /leads/lists/:id endpoint
+  // the Lead Lists screen uses, so the two stay in sync. onSaved() refreshes
+  // the campaign list (leads_remaining etc.).
+  const assignLeadList = async (listId, campaignId) => {
+    setLeadListBusy(true);
+    try {
+      const res = await leadService.assignList(listId, campaignId);
+      notify(res.message || "Lead list updated.", "success", { title: "Campaign Updated" });
+      setAddListId("");
+      loadLeadLists();
+      onSaved?.();
+    } catch (err) {
+      notify(err?.message || "Could not update the lead list.", "error", { title: "Assignment Failed" });
+    } finally {
+      setLeadListBusy(false);
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     try {
@@ -127,15 +234,79 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
         <TabButton active={tab === "sms"} onClick={() => setTab("sms")}>
           SMS
         </TabButton>
+        <TabButton active={tab === "email"} onClick={() => setTab("email")}>
+          Email
+        </TabButton>
       </div>
 
       {tab === "general" && (
-        <dl className="space-y-2.5 text-sm">
-          <Row label="Dialing Mode" value={`${campaign.dialing_mode} Mode`} />
-          <Row label="Status" value={campaign.status} />
-          <Row label="Agents Assigned" value={campaign.agent_count} />
-          <Row label="Wrap-Up Time" value={`${campaign.wrapup_time_seconds}s`} />
-        </dl>
+        <div className="space-y-6">
+          <dl className="space-y-2.5 text-sm">
+            <Row label="Dialing Mode" value={`${campaign.dialing_mode} Mode`} />
+            <Row label="Status" value={campaign.status} />
+            <Row label="Agents Assigned" value={campaign.agent_count} />
+            <Row label="Wrap-Up Time" value={`${campaign.wrapup_time_seconds}s`} />
+          </dl>
+
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Lead Layout</label>
+            <div className="flex items-center gap-2">
+              <select value={leadLayout} onChange={(e) => setLeadLayout(e.target.value)} className="input-field flex-1 py-1.5 text-sm">
+                <option value="roofing">Roofing (address, roof/property fields)</option>
+                <option value="vacation">Vacation (age, travel history)</option>
+              </select>
+              <button
+                onClick={saveLeadLayout}
+                disabled={leadLayoutSaving || leadLayout === (campaign.lead_layout || "roofing")}
+                className="btn-purple shrink-0 px-4 py-1.5 text-sm disabled:opacity-40"
+              >
+                {leadLayoutSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+              Controls which lead card agents see on the call screen for this campaign. Roofing leads and their
+              fields are never removed — this only changes what is shown.
+            </p>
+          </div>
+
+          {campaign.dialing_mode === "parallel" && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+              <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Parallel Dials Per Agent</label>
+              <div className="flex items-center gap-2">
+                <select value={parallelDials} onChange={(e) => setParallelDials(Number(e.target.value))} className="input-field flex-1 py-1.5 text-sm">
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={saveParallelDials}
+                  disabled={parallelDialsSaving || parallelDials === (campaign.default_parallel_dials || 3)}
+                  className="btn-purple shrink-0 px-4 py-1.5 text-sm disabled:opacity-40"
+                >
+                  {parallelDialsSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+                Capped by the admin's maximum in Settings, and by an agent's own choice if they've set one.
+              </p>
+            </div>
+          )}
+
+          <LeadListSection
+            campaign={campaign}
+            leadLists={leadLists}
+            busy={leadListBusy}
+            addListId={addListId}
+            setAddListId={setAddListId}
+            onAssign={assignLeadList}
+          />
+
+          <CampaignDialerControl
+            campaignId={campaign.id}
+            mode={campaign.dialing_mode}
+            campaignStatus={campaign.status}
+          />
+        </div>
       )}
 
       {tab === "sms" && (
@@ -255,6 +426,85 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
           </p>
         </div>
       )}
+
+      {tab === "email" && (
+        <div className="space-y-5">
+          <Toggle
+            label="Enable Email for this Campaign"
+            hint="Off by default — turn on per campaign"
+            value={emailEnabled}
+            onChange={setEmailEnabled}
+          />
+
+          {emailEnabled && (
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Vacation Information Template</label>
+                <select value={emailInformationTemplateId} onChange={(e) => setEmailInformationTemplateId(e.target.value)} className="input-field">
+                  <option value="">Use the default below</option>
+                  {emailTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}{t.is_active ? "" : " (inactive)"}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+                  Loads when the agent picks <span className="font-medium">Vacation Information</span> — package details, no payment link.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Payment Information Template</label>
+                <select value={emailPaymentTemplateId} onChange={(e) => setEmailPaymentTemplateId(e.target.value)} className="input-field">
+                  <option value="">Use the default below</option>
+                  {emailTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}{t.is_active ? "" : " (inactive)"}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+                  Loads when the agent picks <span className="font-medium">Payment Information</span> — must include the {"{{payment_link}}"} button.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Default Email Template</label>
+                <select value={emailDefaultTemplateId} onChange={(e) => setEmailDefaultTemplateId(e.target.value)} className="input-field">
+                  <option value="">No default — agent picks a template</option>
+                  {emailTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}{t.is_active ? "" : " (inactive)"}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+                  Fallback when a purpose above has no template set. The agent can always switch to any other active template.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Default Stripe Payment Link</label>
+                <input
+                  value={emailPaymentLink}
+                  onChange={(e) => setEmailPaymentLink(e.target.value)}
+                  placeholder="https://buy.stripe.com/…"
+                  className="input-field font-mono text-sm"
+                />
+                <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+                  Fills the {"{{payment_link}}"} button in templates. The agent can override it per send for a specific package or customer.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-tertiary)]">
+                Manage the actual templates (HTML, variables, preview) under <span className="font-medium text-[var(--color-text-secondary)]">Campaigns → Email Templates</span>.
+                Only <span className="font-medium text-[var(--color-text-secondary)]">active</span> templates assigned to this campaign (or to all campaigns) appear for agents.
+              </div>
+            </>
+          )}
+
+          <button onClick={saveEmail} disabled={emailSaving} className="btn-purple w-full py-3">
+            {emailSaving ? "Saving…" : "Save Email Settings"}
+          </button>
+          <p className="text-xs text-[var(--color-text-tertiary)]">
+            Agents only see the Email button on campaigns where Email is enabled — and the backend enforces it too.
+          </p>
+        </div>
+      )}
     </SidePanel>
   );
 }
@@ -290,6 +540,86 @@ function Row({ label, value }) {
     <div className="flex items-center justify-between border-b border-[var(--color-border)] py-2 last:border-0">
       <dt className="text-[var(--color-text-secondary)]">{label}</dt>
       <dd className="font-medium text-[var(--color-text-primary)]">{value}</dd>
+    </div>
+  );
+}
+
+function LeadListSection({ campaign, leadLists, busy, addListId, setAddListId, onAssign }) {
+  const assigned = leadLists.filter((l) => l.assigned_campaign?.id === campaign.id);
+  const assignable = leadLists.filter((l) => l.assigned_campaign?.id !== campaign.id);
+  const totalLeads = assigned.reduce((s, l) => s + (l.lead_count ?? l.total_leads ?? 0), 0);
+  const dialable = assigned.reduce((s, l) => s + (l.pending_count ?? 0), 0);
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Lead Lists</h3>
+        {assigned.length > 0 && (
+          <span className="text-xs text-[var(--color-text-tertiary)]">
+            {totalLeads.toLocaleString()} leads · {dialable.toLocaleString()} dialable
+          </span>
+        )}
+      </div>
+
+      {assigned.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-3 text-xs text-[var(--color-text-tertiary)]">
+          No lead lists assigned — this campaign has no leads to dial yet.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {assigned.map((l) => (
+            <li
+              key={l.id}
+              className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2"
+            >
+              <div className="min-w-0 pr-2">
+                <p className="truncate text-sm font-medium text-[var(--color-text-primary)]">{l.name}</p>
+                <p className="text-[11px] text-[var(--color-text-tertiary)]">
+                  {(l.lead_count ?? l.total_leads ?? 0).toLocaleString()} leads
+                </p>
+              </div>
+              <button
+                onClick={() => onAssign(l.id, null)}
+                disabled={busy}
+                title="Remove from this campaign"
+                aria-label={`Remove ${l.name} from this campaign`}
+                className="shrink-0 rounded-lg p-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-danger-tint)] hover:text-[var(--color-danger)] disabled:opacity-40"
+              >
+                <X size={15} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-2.5 flex gap-2">
+        <select
+          value={addListId}
+          onChange={(e) => setAddListId(e.target.value)}
+          disabled={busy || assignable.length === 0}
+          className="input-field flex-1 py-2 text-sm disabled:opacity-50"
+        >
+          <option value="">
+            {assignable.length === 0 ? "No other lead lists — upload one first" : "Add a lead list…"}
+          </option>
+          {assignable.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name} ({(l.lead_count ?? l.total_leads ?? 0).toLocaleString()})
+              {l.assigned_campaign ? ` — now on ${l.assigned_campaign.name}` : ""}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => addListId && onAssign(addListId, campaign.id)}
+          disabled={busy || !addListId}
+          className="btn-purple shrink-0 px-4 py-2 text-sm disabled:opacity-40"
+        >
+          Add
+        </button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+        Adding a list moves its leads into this campaign so the dialer can call them. Removing sends them back to unassigned.
+      </p>
     </div>
   );
 }

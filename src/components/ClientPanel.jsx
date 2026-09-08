@@ -1,26 +1,23 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import SidePanel from "./SidePanel";
-import { CALENDAR_PROVIDERS, isValidCalendarUrl } from "../data/mockData";
-import { getClientAvailability } from "../lib/calendarAvailability";
-import { useAppData } from "../lib/AppDataContext";
-import { useAuth } from "../lib/AuthContext";
+import { CALENDAR_PROVIDERS, isValidCalendarUrl } from "../data/catalogues";
 import { useToast } from "../lib/ToastContext";
+import adminService from "../services/adminService";
 
 const emptyForm = {
   name: "",
-  calendarProvider: CALENDAR_PROVIDERS[0],
-  calendarUrl: "",
-  calendarEnabled: false,
-  campaignIds: [],
+  calendar_provider: CALENDAR_PROVIDERS[0],
+  calendar_url: "",
+  calendar_enabled: false,
+  campaign_ids: [],
 };
 
-export default function ClientPanel({ open, onClose, editingClient }) {
-  const { user } = useAuth();
-  const { campaigns, addClient, updateClient } = useAppData();
+export default function ClientPanel({ open, onClose, editingClient, campaigns = [], onSaved }) {
   const { notify } = useToast();
   const [form, setForm] = useState(emptyForm);
-  const [testState, setTestState] = useState(null); // null | "checking" | "ok" | "fail"
+  const [testState, setTestState] = useState(null); // null | "checking" | { ok, message }
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -28,51 +25,75 @@ export default function ClientPanel({ open, onClose, editingClient }) {
     setForm(
       editingClient
         ? {
-            name: editingClient.name,
-            calendarProvider: editingClient.calendarProvider || CALENDAR_PROVIDERS[0],
-            calendarUrl: editingClient.calendarUrl || "",
-            calendarEnabled: editingClient.calendarEnabled,
-            campaignIds: editingClient.campaignIds || [],
+            name: editingClient.name || "",
+            calendar_provider: editingClient.calendar_provider || CALENDAR_PROVIDERS[0],
+            calendar_url: editingClient.calendar_url || "",
+            calendar_enabled: !!editingClient.calendar_url,
+            // The link lives on the campaign, so the current selection is read
+            // back from the campaigns pointing at this client.
+            campaign_ids: campaigns.filter((c) => c.client_id === editingClient.id).map((c) => c.id),
           }
         : emptyForm
     );
-  }, [open, editingClient]);
+  }, [open, editingClient, campaigns]);
 
   const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
   const toggleCampaign = (id) => {
-    setForm((f) => ({ ...f, campaignIds: f.campaignIds.includes(id) ? f.campaignIds.filter((c) => c !== id) : [...f.campaignIds, id] }));
+    setForm((f) => ({
+      ...f,
+      campaign_ids: f.campaign_ids.includes(id) ? f.campaign_ids.filter((c) => c !== id) : [...f.campaign_ids, id],
+    }));
   };
 
-  const testConnection = () => {
-    if (!isValidCalendarUrl(form.calendarUrl)) {
-      setTestState("fail");
-      return;
-    }
+  // Asks the server to fetch the URL. It reports whether the page responded
+  // and nothing more — availability is not parsed from it, so this no longer
+  // claims to have found open slots.
+  const testConnection = async () => {
     setTestState("checking");
-    setTimeout(() => {
-      const preview = getClientAvailability(editingClient?.id ?? "preview", 1);
-      setTestState({ ok: true, slotCount: preview[0]?.slots.length ?? 0, day: preview[0]?.label });
-    }, 700);
+    try {
+      const res = await adminService.testCalendarUrl(form.calendar_url);
+      setTestState({ ok: !!res?.data?.reachable, message: res?.message });
+    } catch (err) {
+      setTestState({ ok: false, message: err?.response?.data?.message || "Could not check that URL." });
+    }
   };
 
-  const save = () => {
+  const save = async () => {
     if (!form.name.trim()) {
       notify("Give this client a name before saving.", "warning");
       return;
     }
-    if (form.calendarEnabled && !isValidCalendarUrl(form.calendarUrl)) {
+    if (form.calendar_enabled && !isValidCalendarUrl(form.calendar_url)) {
       notify("Calendar is enabled but the URL isn't valid — fix the URL or disable the calendar.", "warning");
       return;
     }
-    if (editingClient) {
-      updateClient(user.name, editingClient.id, form);
-      notify(`${form.name}'s calendar configuration saved.`, "success");
-    } else {
-      addClient(user.name, form);
-      notify(`${form.name} added.`, "success", { title: "Client Created" });
+
+    const payload = {
+      name: form.name.trim(),
+      calendar_provider: form.calendar_provider,
+      // Clearing the URL is how a calendar is disabled; the list reads the
+      // presence of a URL as "enabled", so the two cannot disagree.
+      calendar_url: form.calendar_enabled ? form.calendar_url : "",
+      campaign_ids: form.campaign_ids,
+    };
+
+    setSaving(true);
+    try {
+      if (editingClient) {
+        await adminService.updateClient(editingClient.id, payload);
+        notify(`${payload.name}'s calendar configuration saved.`, "success");
+      } else {
+        await adminService.createClient(payload);
+        notify(`${payload.name} added.`, "success", { title: "Client Created" });
+      }
+      await onSaved?.();
+      onClose();
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not save this client.", "error");
+    } finally {
+      setSaving(false);
     }
-    onClose();
   };
 
   return (
@@ -95,15 +116,15 @@ export default function ClientPanel({ open, onClose, editingClient }) {
           </div>
           <button
             type="button"
-            onClick={() => setField("calendarEnabled", !form.calendarEnabled)}
-            className={`h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${form.calendarEnabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}
+            onClick={() => setField("calendar_enabled", !form.calendar_enabled)}
+            className={`h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${form.calendar_enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}
           >
-            <span className={`block h-5 w-5 translate-x-0.5 rounded-full bg-white transition-transform duration-300 ${form.calendarEnabled ? "translate-x-5" : ""}`} />
+            <span className={`block h-5 w-5 translate-x-0.5 rounded-full bg-white transition-transform duration-300 ${form.calendar_enabled ? "translate-x-5" : ""}`} />
           </button>
         </div>
 
         <Field label="Calendar Provider">
-          <select value={form.calendarProvider} onChange={(e) => setField("calendarProvider", e.target.value)} className="input-field">
+          <select value={form.calendar_provider} onChange={(e) => setField("calendar_provider", e.target.value)} className="input-field">
             {CALENDAR_PROVIDERS.map((p) => (
               <option key={p}>{p}</option>
             ))}
@@ -113,9 +134,9 @@ export default function ClientPanel({ open, onClose, editingClient }) {
         <Field label="Calendar / Availability URL">
           <div className="flex gap-2">
             <input
-              value={form.calendarUrl}
+              value={form.calendar_url}
               onChange={(e) => {
-                setField("calendarUrl", e.target.value);
+                setField("calendar_url", e.target.value);
                 setTestState(null);
               }}
               className="input-field"
@@ -130,14 +151,9 @@ export default function ClientPanel({ open, onClose, editingClient }) {
               <Loader2 size={12} className="animate-spin" /> Checking calendar…
             </p>
           )}
-          {testState === "fail" && (
-            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[var(--color-danger)]">
-              <XCircle size={12} /> That doesn&rsquo;t look like a valid calendar URL (must be https://).
-            </p>
-          )}
-          {testState && testState.ok && (
-            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[var(--color-success)]">
-              <CheckCircle2 size={12} /> Connected — found {testState.slotCount} open slots for {testState.day}.
+          {testState && testState !== "checking" && (
+            <p className={`mt-1.5 flex items-center gap-1.5 text-xs ${testState.ok ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}>
+              {testState.ok ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {testState.message}
             </p>
           )}
         </Field>
@@ -145,20 +161,24 @@ export default function ClientPanel({ open, onClose, editingClient }) {
         <div>
           <label className="mb-2 block text-sm font-medium text-[var(--color-text-primary)]">Associated Campaigns / Lead Lists</label>
           <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-[var(--color-border)] p-2">
-            {campaigns.map((c) => (
-              <label key={c.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg)]">
-                <input type="checkbox" checked={form.campaignIds.includes(c.id)} onChange={() => toggleCampaign(c.id)} className="accent-[var(--color-accent)]" />
-                {c.name}
-              </label>
-            ))}
+            {campaigns.length === 0 ? (
+              <p className="px-2 py-1.5 text-sm text-[var(--color-text-tertiary)]">No campaigns yet.</p>
+            ) : (
+              campaigns.map((c) => (
+                <label key={c.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg)]">
+                  <input type="checkbox" checked={form.campaign_ids.includes(c.id)} onChange={() => toggleCampaign(c.id)} className="accent-[var(--color-accent)]" />
+                  {c.name}
+                </label>
+              ))
+            )}
           </div>
           <p className="mt-1.5 text-xs text-[var(--color-text-tertiary)]">
             A campaign can only belong to one client — selecting it here removes it from any other client automatically.
           </p>
         </div>
 
-        <button onClick={save} className="btn-purple w-full py-3">
-          Save Calendar Configuration
+        <button onClick={save} disabled={saving} className="btn-purple w-full py-3 disabled:opacity-40">
+          {saving ? "Saving…" : "Save Calendar Configuration"}
         </button>
       </div>
     </SidePanel>

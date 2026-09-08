@@ -81,7 +81,7 @@ export default function CallCenterLiveCalls() {
               />
             </div>
           ) : (
-            <table className="w-full min-w-[900px] text-left text-sm">
+            <table className="w-full min-w-[1000px] text-left text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-xs uppercase tracking-wide text-[var(--color-text-tertiary)]">
                   <th className="px-5 py-3 font-medium">Agent</th>
@@ -90,15 +90,28 @@ export default function CallCenterLiveCalls() {
                   <th className="px-5 py-3 font-medium">Number</th>
                   <th className="px-5 py-3 font-medium">Direction</th>
                   <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 font-medium">Duration</th>
+                  <th className="px-5 py-3 font-medium">Ring</th>
+                  <th className="px-5 py-3 font-medium">Talk</th>
+                  <th className="px-5 py-3 font-medium">Total</th>
                 </tr>
               </thead>
               <tbody>
                 {calls.map((c, i) => {
-                  // Counted from the answer where there is one — time spent
-                  // ringing is not talk time.
-                  const started = new Date(c.answered_at || c.started_at).getTime();
-                  const seconds = Math.max(0, Math.floor((now - started) / 1000));
+                  // Every timer is derived from the call's real timestamps, so
+                  // a page refresh reconstructs the same numbers instead of
+                  // restarting at 0. `now` ticks once a second between polls.
+                  const startedMs = c.started_at ? new Date(c.started_at).getTime() : null;
+                  const answeredMs = c.answered_at ? new Date(c.answered_at).getTime() : null;
+                  // Ring: dial → answer. Freezes once answered; still counting
+                  // up while the call is unanswered.
+                  const ringSeconds = startedMs
+                    ? Math.max(0, Math.floor(((answeredMs ?? now) - startedMs) / 1000))
+                    : null;
+                  // Talk: answer → now. Nothing until the call connects.
+                  const talkSeconds = answeredMs ? Math.max(0, Math.floor((now - answeredMs) / 1000)) : null;
+                  // Total: dial → now.
+                  const totalSeconds = startedMs ? Math.max(0, Math.floor((now - startedMs) / 1000)) : null;
+                  const dash = <span className="text-[var(--color-text-tertiary)]">—</span>;
                   return (
                     <tr key={c.id} className={`border-b border-[var(--color-border)] last:border-0 ${i % 2 ? "bg-[var(--color-bg)]" : ""}`}>
                       <td className="px-5 py-3.5 font-medium text-[var(--color-text-primary)]">{c.agent_name || "—"}</td>
@@ -119,7 +132,9 @@ export default function CallCenterLiveCalls() {
                           {STATUS_LABEL[c.status] || c.status}
                         </span>
                       </td>
-                      <td className="px-5 py-3.5 font-mono text-[var(--color-text-secondary)]">{formatDuration(seconds)}</td>
+                      <td className="px-5 py-3.5 font-mono text-[var(--color-text-secondary)]">{ringSeconds != null ? formatDuration(ringSeconds) : dash}</td>
+                      <td className="px-5 py-3.5 font-mono text-[var(--color-text-secondary)]">{talkSeconds != null ? formatDuration(talkSeconds) : dash}</td>
+                      <td className="px-5 py-3.5 font-mono text-[var(--color-text-primary)]">{totalSeconds != null ? formatDuration(totalSeconds) : dash}</td>
                     </tr>
                   );
                 })}

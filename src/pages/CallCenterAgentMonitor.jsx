@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ScreenHeader from "../components/ScreenHeader";
 import AgentMonitorTable from "../components/AgentMonitorTable";
-import { useAppData } from "../lib/AppDataContext";
-import { useAuth } from "../lib/AuthContext";
 import { useAgentActions } from "../lib/useAgentActions";
 import agentService from "../services/agentService";
+import adminService from "../services/adminService";
 
 const REFRESH_MS = { stop: null, slow: 5000, fast: 1000 };
 
@@ -29,9 +28,12 @@ function normalizeSession(row) {
 }
 
 export default function CallCenterAgentMonitor() {
-  const { agentLogoutLog } = useAppData();
   const { handleMonitor, handleAgentAction, panels } = useAgentActions();
   const [agents, setAgents] = useState([]);
+  // Read from agent_sessions: who logged out, when, and why. This was a seeded
+  // array in React state, so it showed the same four invented rows to everyone
+  // and never reflected a real sign-out.
+  const [agentLogoutLog, setAgentLogoutLog] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshRate, setRefreshRate] = useState("slow");
 
@@ -45,6 +47,19 @@ export default function CallCenterAgentMonitor() {
 
   useEffect(() => {
     loadAgents();
+    adminService
+      .agentLogouts({ limit: 50 })
+      .then((res) =>
+        setAgentLogoutLog(
+          (res?.data?.logouts || []).map((l) => ({
+            id: l.id,
+            agentName: l.agent_name,
+            reason: l.reason,
+            timestamp: new Date(l.session_end).getTime(),
+          }))
+        )
+      )
+      .catch(() => setAgentLogoutLog([]));
   }, [loadAgents]);
 
   useEffect(() => {

@@ -12,6 +12,7 @@ import { useSoftphone } from "../lib/softphone";
 import { useAudioPrompt, LOGIN_PROMPT_SRC } from "../lib/audioPrompt";
 import { useCallRecording } from "../lib/useCallRecording";
 import IncomingCallPanel from "./IncomingCallPanel";
+import ErrorBoundary from "./ErrorBoundary";
 import monitorService from "../services/monitorService";
 
 // Auth + role enforcement happens per-route via RequireRole. This shell just
@@ -95,7 +96,12 @@ function AgentShell() {
         onTestAudio={testAudio}
       />
       <main className="min-w-0 flex-1">
-        <Outlet context={{ sidebarOpen, openPanel, closePanel: () => setOpenPanel(null), softphone, recording }} />
+        {/* Deliberately wraps only the routed page, not the <audio> element
+            or the softphone above — a crash in the dashboard must not tear
+            down a live call's audio along with it. */}
+        <ErrorBoundary>
+          <Outlet context={{ sidebarOpen, openPanel, closePanel: () => setOpenPanel(null), softphone, recording }} />
+        </ErrorBoundary>
       </main>
     </div>
   );
@@ -129,7 +135,9 @@ function AdminShell() {
         <FundingBanner />
         <DidAlertBanner />
         <main className="min-w-0 flex-1">
-          <Outlet />
+          <ErrorBoundary liveCallHint={false}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Check, MapPin, CalendarDays, AlertTriangle } from "lucide-react";
+import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Mail, Check, MapPin, CalendarDays, AlertTriangle, RefreshCw } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
+import { useAgentLiveState } from "../lib/useAgentLiveState";
 import { useToast } from "../lib/ToastContext";
+import adminService from "../services/adminService";
 import StatusPill from "../components/StatusPill";
 import SidePanel from "../components/SidePanel";
 import AgentStatsPanel from "../components/AgentStatsPanel";
@@ -21,10 +23,13 @@ import { matchesBinding } from "../lib/hotkeys";
 import campaignService from "../services/campaignService";
 import smsService from "../services/smsService";
 import SmsConversation from "../components/SmsConversation";
+import EmailComposer from "../components/EmailComposer";
 import hotkeyService from "../services/hotkeyService";
 import scriptService from "../services/scriptService";
 import agentService from "../services/agentService";
 import callService from "../services/callService";
+import dialerService from "../services/dialerService";
+import leadService from "../services/leadService";
 import reportService from "../services/reportService";
 import { playDtmfTone, addedDtmfDigits } from "../lib/dtmf";
 
@@ -42,6 +47,17 @@ const DISPOSITION_NAME_MAP = {
   do_not_call: "dnc",
   follow_up: "follow_up",
 };
+
+// The reverse of the map above — a hotkey press hands submitDisposition()
+// one of these screen-local keys (e.g. "booked"), but the backend's
+// dispositions table (and POST /calls/:id/disposition) only knows the real
+// name (e.g. "booked_appointment"). A direct click on a WrapupState
+// disposition button already passes the real name straight through
+// (dispositions[].key is d.name from the API), so this lookup is a no-op
+// for that path — only hotkey-sourced keys are actually remapped.
+const REVERSE_DISPOSITION_MAP = Object.fromEntries(
+  Object.entries(DISPOSITION_NAME_MAP).map(([dbName, localKey]) => [localKey, dbName])
+);
 
 function todayDateStr() {
   return new Date().toISOString().slice(0, 10);
@@ -89,24 +105,105 @@ function buildManualDialLead(phone) {
   };
 }
 
+// Turns the backend's hydrated-lead payload (GET /admin/leads/lookup or
+// GET /agent/current-call) into the flat shape this screen's panels read.
+// The lead's real id is carried through so a disposition, SMS or booked
+// appointment attaches to the actual lead record and its history — and
+// campaign/lead-list context is shown without ever being written back.
+function mapLeadFromApi(payload) {
+  const l = payload?.lead;
+  if (!l) return null;
+  const cf = l.custom_fields || {};
+  return {
+    id: l.id,
+    fullName: [l.first_name, l.last_name].filter(Boolean).join(" ") || "Unknown Contact",
+    phone: l.phone_number || "",
+    email: l.email || "",
+    street: l.street_address || "",
+    city: l.city || "",
+    state: l.state || "",
+    zip: l.zip_code || "",
+    timezone: l.timezone || "",
+    timesCalled: l.times_called ?? (payload.calls?.length || 0),
+    lastDisposition: l.last_disposition || "—",
+    notes: cf.notes || cf.note || "",
+    customValues: cf,
+    // Vacation-campaign fields — null on roofing leads, which never display them.
+    age: l.age ?? null,
+    lastTravelDate: l.last_travel_date || "",
+    lastTravelDestination: l.last_travel_destination || "",
+    status: l.status || null,
+    campaignId: l.campaign_id || null,
+    campaignName: l.campaign?.name || null,
+    leadListName: l.lead_list?.name || null,
+    isDnc: Boolean(l.is_dnc || payload.dnc),
+    history: {
+      calls: payload.calls || [],
+      conversations: payload.conversations || [],
+      appointments: payload.appointments || [],
+    },
+  };
+}
+
+// The human-readable line the agent sees while no call is in progress.
+// Driven entirely by what the backend dialing engine reports — never a
+// client-side guess or timer.
+function dialerWaitingMessage(dialerState) {
+  if (!dialerState) {
+    return { title: "Checking campaign status…", hint: "Contacting the dialer.", tone: "info" };
+  }
+  const s = dialerState.state;
+  if (s === "running") {
+    return { title: "Campaign Running", hint: "You'll be connected automatically once the dialer has a call for you.", tone: "info" };
+  }
+  if (s === "waiting_for_agent") {
+    return { title: "Campaign Running", hint: "Waiting for an available agent slot — stay on Available.", tone: "info" };
+  }
+  if (s === "exhausted") {
+    return { title: "No Eligible Leads", hint: "Every lead in this campaign has been dialed or is not currently callable.", tone: "warning" };
+  }
+  if (s === "paused") {
+    return { title: "Campaign Paused", hint: "A manager has paused this campaign's dialer.", tone: "warning" };
+  }
+  if (s === "not_started") {
+    return { title: "Waiting for Campaign to Start", hint: "The dialer is ready but hasn't been started by a manager yet.", tone: "neutral" };
+  }
+  if (typeof s === "string" && s.startsWith("blocked_")) {
+    const reason = dialerState.blocked_reason || "";
+    if (s === "blocked_funds_ok") return { title: "Telephony Error", hint: reason, tone: "danger" };
+    if (s === "blocked_has_usable_did" || s === "blocked_telephony_configured") {
+      return { title: "Telephony Error", hint: reason, tone: "danger" };
+    }
+    if (s === "blocked_has_pending_leads") return { title: "No Eligible Leads", hint: reason, tone: "warning" };
+    if (s === "blocked_within_calling_hours") return { title: "Outside Calling Hours", hint: reason, tone: "warning" };
+    return { title: "Campaign Configuration Required", hint: reason, tone: "danger" };
+  }
+  return { title: "Waiting for Campaign to Start", hint: "You'll be connected automatically once the dialer has a call for you.", tone: "neutral" };
+}
+
 export default function AgentDashboard() {
   const { user, activeCampaignId, sessionId, logout } = useAuth();
-  const {
-    clients,
-    customFields,
-    callbacks,
-    addCallback,
-    updateCallbackStatus,
-    agentMessages,
-    consumeAgentMessage,
-    agentControl,
-    logManualDialCall,
-    phoneNumbers,
-    selectBestDID,
-    markDIDInUse,
-    recordCallOutcome,
-    recordAgentLogout,
-  } = useAppData();
+  const { customFields, phoneNumbers, selectBestDID, markDIDInUse } = useAppData();
+
+  // Clients are read from the API rather than a shared context: the booking
+  // panel needs the client's calendar link, and the campaign points at its
+  // client by id.
+  const [clients, setClients] = useState([]);
+  const [myCallbacks, setMyCallbacks] = useState([]);
+
+  const refreshMyCallbacks = useCallback(
+    () =>
+      adminService
+        .listCallbacks({ page_size: 20 })
+        .then((r) => setMyCallbacks(r?.data?.callbacks || []))
+        .catch(() => {}),
+    []
+  );
+
+  useEffect(() => {
+    adminService.listClients().then((r) => setClients(r?.data?.clients || [])).catch(() => {});
+    refreshMyCallbacks();
+  }, [refreshMyCallbacks]);
   const { notify } = useToast();
   const navigate = useNavigate();
   // The softphone (SIP.js, registered against Telnyx) is instantiated once
@@ -141,7 +238,9 @@ export default function AgentDashboard() {
 
   // The client (and therefore which calendar to show) is derived entirely
   // from the lead's campaign — the agent never picks it themselves.
-  const resolvedClient = clients.find((c) => c.campaignIds?.includes(campaign?.id)) ?? null;
+  // A campaign carries its client's id, so the client is looked up by that
+  // rather than by scanning each client's list of campaigns.
+  const resolvedClient = clients.find((c) => c.id === campaign?.client_id) ?? null;
   const wrapUpLimit = campaign?.wrapup_time_seconds ?? 60;
 
   const [hotkeys, setHotkeys] = useState([]);
@@ -205,6 +304,15 @@ export default function AgentDashboard() {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
 
   const [callState, setCallState] = useState("waiting"); // waiting | ringing | connected | wrapup
+  // Live state of this campaign's dialing engine (GET /dialer/status) —
+  // what the "waiting" screen shows instead of a static placeholder.
+  const [dialerState, setDialerState] = useState(null);
+  // This agent's Parallel Dials setting + the company's ceiling, and how
+  // many of their current batch are still actively ringing right now —
+  // the numbers behind the Parallel Dials dropdown and the "N active
+  // dials" indicator beside the phone icon.
+  const [parallelSettings, setParallelSettings] = useState({ parallel_dials: 1, max_parallel_dials: 5, parallel_dialing_enabled: false });
+  const [parallelStatus, setParallelStatus] = useState({ active: false, active_calls: 0, requested_count: 0 });
   const [callSeconds, setCallSeconds] = useState(0);
   const [wrapSeconds, setWrapSeconds] = useState(0);
   const [disposition, setDisposition] = useState(null);
@@ -230,6 +338,7 @@ export default function AgentDashboard() {
   // during it can be linked back to the recording and call history.
   const [activeCallId, setActiveCallId] = useState(null);
   const [smsOpen, setSmsOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
   const [smsSent, setSmsSent] = useState(false);
   const [smsNote, setSmsNote] = useState("");
   const [manualDialNumber, setManualDialNumber] = useState("");
@@ -238,16 +347,14 @@ export default function AgentDashboard() {
   const [dtmfInput, setDtmfInput] = useState("");
   const [isManualCall, setIsManualCall] = useState(false);
   // The DID Reputation Engine — never chosen by the agent. selectBestDID()
-  // picks it the instant a call connects; recordCallOutcome() reports back
-  // to the engine the instant wrap-up is submitted.
+  // picks it the instant a call connects. The outcome is not reported back
+  // from here: the score is recalculated server-side from the calls table,
+  // which already records how this call went.
   const [activeDIDId, setActiveDIDId] = useState(null);
   const [flashKey, setFlashKey] = useState(null);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
   const [scheduledCallbackAt, setScheduledCallbackAt] = useState(null);
-  const [activeDuePopup, setActiveDuePopup] = useState(null);
-  const lastForcedAtRef = useRef(null);
-  const lastForceLogoutAtRef = useRef(null);
 
   const [statsToday, setStatsToday] = useState({
     calls: 0,
@@ -285,9 +392,12 @@ export default function AgentDashboard() {
         ...s,
         calls: row?.total_calls ?? 0,
         connects: row?.connects ?? 0,
-        booked: breakdown["Booked Appointment"] ?? 0,
-        notInterested: breakdown["Not Interested"] ?? 0,
-        noAnswers: breakdown["No Answer"] ?? 0,
+        // Keyed by the disposition's `name` (slug) — calls.disposition
+        // stores that, not the display label, matching every other place a
+        // disposition is referenced (hotkeys included).
+        booked: breakdown["booked_appointment"] ?? 0,
+        notInterested: breakdown["not_interested"] ?? 0,
+        noAnswers: breakdown["no_answer"] ?? 0,
         avgDurationSeconds: row?.avg_call_duration_seconds ?? 0,
       }));
     } catch {
@@ -412,9 +522,8 @@ export default function AgentDashboard() {
 
   // Reacts to the tick above rather than nesting these setState calls inside
   // setWrapSeconds's updater — updater functions must stay pure, and calling
-  // another component's setter (recordAgentLogout, from AppDataProvider)
-  // from inside one trips React's "setState while rendering a different
-  // component" warning.
+  // another component's setter from inside one trips React's "setState while
+  // rendering a different component" warning.
   useEffect(() => {
     if (callState !== "wrapup" || sessionEnded) return;
     const yellowAt = Math.round(wrapUpLimit * 0.75);
@@ -427,64 +536,195 @@ export default function AgentDashboard() {
     // silently resetting status in place.
     if (wrapSeconds >= wrapUpLimit) {
       setAutoLogoutCount((c) => c + 1);
-      recordAgentLogout(user.name, "wrapup_timeout");
+      // The session row records the reason server-side when the session is
+      // closed; this local key only drives the overlay's wording.
       localStorage.setItem("logout_reason", "wrapup_timeout");
       setSessionEnded(true);
     }
-  }, [wrapSeconds, callState, sessionEnded, notify, user.name, wrapUpLimit, recordAgentLogout]);
+  }, [wrapSeconds, callState, sessionEnded, notify, user.name, wrapUpLimit]);
 
-  // Poll for a scheduled callback whose time has arrived — surfaces a
-  // bottom-right popup without ever covering the call panel or script.
+  // Supervisor actions and due callbacks arrive from the server. They used to
+  // come from a React context shared with the admin screens, which only
+  // delivered anything when both were open in the same browser tab.
+  const handleForcedStatus = useCallback(
+    (status) => {
+      setStatus(status);
+      setStatusSince(Date.now());
+      notify(`An administrator changed your status to "${status}".`, "warning", { title: "Status Changed by Admin" });
+    },
+    [notify]
+  );
+
+  const handleForcedLogout = useCallback(
+    (reason) => {
+      notify("You were logged out by an administrator.", "error", { title: "Force Logout" });
+      localStorage.setItem("logout_reason", reason || "admin_kick");
+      logout();
+      navigate("/agent/login");
+    },
+    [notify, logout, navigate]
+  );
+
+  const handleIncomingMessage = useCallback(
+    (m) => notify(m.body, "info", { title: `Message from ${m.from_name || "your supervisor"}` }),
+    [notify]
+  );
+
+  const { dueCallback, resolveCallback, dismissCallbackPopup, noteOwnStatusChange } = useAgentLiveState({
+    enabled: !sessionEnded,
+    onMessage: handleIncomingMessage,
+    onForcedStatus: handleForcedStatus,
+    onForcedLogout: handleForcedLogout,
+  });
+
+  // Presence heartbeat. While the dialer is open this pings the backend every
+  // 20s; the Agent Monitor counts this session as online only for as long as
+  // the pings keep coming. When the tab closes they stop and the backend
+  // reaper takes the agent offline — so "online" reflects a real connection,
+  // not a row that was never cleaned up.
   useEffect(() => {
-    const id = setInterval(() => {
-      setActiveDuePopup((current) => {
-        if (current) return current;
-        const due = callbacks.find(
-          (c) => c.agentName === user.name && c.status === "Pending" && c.scheduledAt <= Date.now()
-        );
-        return due ?? null;
-      });
-    }, 1000);
+    if (sessionEnded) return undefined;
+    agentService.heartbeat().catch(() => {});
+    const id = setInterval(() => agentService.heartbeat().catch(() => {}), 20000);
     return () => clearInterval(id);
-  }, [callbacks, user.name]);
+  }, [sessionEnded]);
 
-  // An admin can remotely force a status change or log this agent out —
-  // reflected instantly since it's the same shared context.
+  // Poll the real dialing-engine state while the agent is between calls and
+  // NOT in manual-dial mode. This is what replaces the old static
+  // "Waiting for campaign to start..." text with the engine's actual state
+  // (running / waiting for agent / no leads / paused / blocked + reason).
   useEffect(() => {
-    if (agentControl.forcedFor !== user.name || !agentControl.forcedAt) return;
-    if (lastForcedAtRef.current === agentControl.forcedAt) return;
-    lastForcedAtRef.current = agentControl.forcedAt;
-    setStatus(agentControl.forcedStatus);
-    setStatusSince(Date.now());
-    notify(`An administrator changed your status to "${agentControl.forcedStatus}".`, "warning", { title: "Status Changed by Admin" });
-  }, [agentControl, notify, user.name]);
+    const campaignId = activeCampaignId || campaign?.id;
+    if (sessionEnded || !campaignId || callState !== "waiting" || status === "manual_dial") {
+      return undefined;
+    }
+    let cancelled = false;
+    const load = () =>
+      dialerService
+        .status(campaignId)
+        .then((res) => {
+          if (!cancelled) setDialerState(res.data);
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [activeCampaignId, campaign?.id, callState, status, sessionEnded]);
 
+  // This agent's Parallel Dials setting + the company's ceiling — loaded
+  // once (it changes rarely, and setParallelDialsOption below keeps this
+  // state in sync with anything the agent actually changes).
   useEffect(() => {
-    if (agentControl.forceLogoutFor !== user.name || !agentControl.forceLogoutAt) return;
-    if (lastForceLogoutAtRef.current === agentControl.forceLogoutAt) return;
-    lastForceLogoutAtRef.current = agentControl.forceLogoutAt;
-    notify("You were logged out by an administrator.", "error", { title: "Force Logout" });
-    localStorage.setItem("logout_reason", "admin_kick");
-    logout();
-    navigate("/agent/login");
-  }, [agentControl, notify, user.name, logout, navigate]);
+    let cancelled = false;
+    agentService
+      .getParallelDials()
+      .then((res) => {
+        if (!cancelled && res?.data) setParallelSettings(res.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  // Admin-sent messages surface as a toast, matching the "small pop-up"
-  // requirement without a second overlay system.
+  // Live count of this agent's currently-ringing parallel legs — the
+  // number the "N active dials" indicator shows. Polled quickly (2s) since
+  // this is exactly the figure meant to visibly move as legs resolve.
   useEffect(() => {
-    const mine = agentMessages.filter((m) => m.agentName === user.name);
-    mine.forEach((m) => {
-      notify(m.text, "info", { title: `Message from ${m.from}` });
-      consumeAgentMessage(m.id);
+    if (sessionEnded || !parallelSettings.parallel_dialing_enabled || campaign?.dialing_mode !== "parallel") return undefined;
+    if (callState !== "waiting" || status === "manual_dial") {
+      setParallelStatus({ active: false, active_calls: 0, requested_count: 0 });
+      return undefined;
+    }
+    let cancelled = false;
+    const load = () =>
+      agentService
+        .getParallelStatus()
+        .then((res) => {
+          if (!cancelled && res?.data) setParallelStatus(res.data);
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionEnded, callState, status, parallelSettings.parallel_dialing_enabled, campaign?.dialing_mode]);
+
+  const handleParallelDialsChange = (n) => {
+    const prev = parallelSettings.parallel_dials;
+    setParallelSettings((s) => ({ ...s, parallel_dials: n }));
+    agentService.setParallelDials(n).catch((err) => {
+      setParallelSettings((s) => ({ ...s, parallel_dials: prev }));
+      notify(err?.message || "Could not save your Parallel Dials setting.", "error");
     });
-  }, [agentMessages, user.name, notify, consumeAgentMessage]);
+  };
+
+  // Poll for the dialer call this agent is currently on / being rung for, so
+  // a progressive-campaign call arrives with the real lead (name, address,
+  // history) already on screen. The softphone only carries audio — it never
+  // says who is being called. Manual calls are skipped here: handleDial
+  // already set that lead from the number the agent typed.
+  useEffect(() => {
+    if (sessionEnded || isManualCall) return undefined;
+    if (callState === "wrapup") return undefined;
+    let cancelled = false;
+    const load = () =>
+      agentService
+        .currentCall()
+        .then((res) => {
+          if (cancelled) return;
+          const payload = res?.data;
+          const call = payload?.call;
+          if (!call || call.call_type === "manual") return;
+          // The server's active call is the one to attach SMS / bookings to.
+          setActiveCallId(call.id);
+          const mapped = mapLeadFromApi(payload);
+          if (mapped) {
+            setLead((prev) => (prev?.id === mapped.id ? prev : mapped));
+          }
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionEnded, isManualCall, callState]);
+
+  // One-time sync of this agent's status from the server session on mount,
+  // so a status a supervisor set (or a reload mid-shift) is reflected rather
+  // than always starting at "available".
+  useEffect(() => {
+    let cancelled = false;
+    agentService
+      .heartbeat()
+      .then((res) => {
+        const serverStatus = res?.data?.status;
+        if (!cancelled && serverStatus && serverStatus !== "logged_out") {
+          setStatus(serverStatus);
+          noteOwnStatusChange(serverStatus);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleStatusChange = (key) => {
     setStatus(key);
     setStatusSince(Date.now());
     setStatusMenuOpen(false);
-    // Best-effort — the local status UI is authoritative either way, this
-    // just keeps the backend's agent_sessions row in sync for reporting.
+    // Recorded locally first so the next poll does not read this agent's own
+    // change as one a supervisor made.
+    noteOwnStatusChange(key);
     agentService.changeStatus(key).catch(() => {});
   };
 
@@ -517,7 +757,28 @@ export default function AgentDashboard() {
       notify("Softphone is not registered yet — please wait a moment and try again.", "warning");
       return;
     }
+    // Show a placeholder immediately, then look the number up against the
+    // lead database. If it already belongs to a lead, swap in that lead's
+    // full record (name, address, campaign, history) — matched on the
+    // server-normalised phone number so any format the agent types resolves.
+    // Never creates a lead, and never changes the matched lead's campaign.
     setLead(buildManualDialLead(trimmed));
+    leadService
+      .lookupByPhone(trimmed)
+      .then((res) => {
+        const mapped = mapLeadFromApi(res?.data);
+        if (mapped) {
+          setLead(mapped);
+          notify(
+            `Existing lead found: ${mapped.fullName}${mapped.campaignName ? ` · ${mapped.campaignName}` : ""}`,
+            "info",
+            { title: "Lead Recognised" }
+          );
+        }
+      })
+      .catch(() => {
+        // Lookup is best-effort — the dial still goes out with the placeholder.
+      });
     setIsManualCall(true);
     const bestDID = selectBestDID(campaign?.id, extractAreaCode(trimmed));
     if (bestDID) {
@@ -556,6 +817,91 @@ export default function AgentDashboard() {
     });
   };
 
+  // Preview Dialing — the lead the agent is currently reviewing (not yet
+  // dialed), and the DIAL/NEXT actions on it. Deliberately separate from
+  // `lead`/`activeCallId` above: those represent a real call in progress
+  // (populated by the existing agent/current-call poll below once one
+  // exists), while this is the pre-dial review step that spec explicitly
+  // requires never create a call or count as an attempt.
+  const [previewLead, setPreviewLead] = useState(null);
+  const [previewMessage, setPreviewMessage] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewDialing, setPreviewDialing] = useState(false);
+  const isPreviewMode = campaign?.dialing_mode === "preview";
+
+  const loadPreviewLead = useCallback(
+    (skipLeadId) => {
+      if (!campaign?.id) return;
+      setPreviewLoading(true);
+      dialerService
+        .previewNext(campaign.id, skipLeadId)
+        .then((res) => {
+          const mapped = mapLeadFromApi(res?.data?.history);
+          setPreviewLead(mapped);
+          setPreviewMessage(mapped ? null : res?.data?.message || "No more leads available.");
+          if (mapped) setLead(mapped); // let the script panel's merge fields show the real lead while reviewing
+        })
+        .catch((err) => {
+          setPreviewLead(null);
+          setPreviewMessage(err?.message || "Could not load the next lead.");
+        })
+        .finally(() => setPreviewLoading(false));
+    },
+    [campaign?.id]
+  );
+
+  // Fetches once when Preview becomes the relevant thing to show — not
+  // polled, since the reservation stays valid until the agent acts and
+  // re-fetching on a timer would just be noise (and risk clobbering an
+  // in-flight review with a duplicate reservation). The backend decides
+  // whether a lead comes back or a "paused"/"no more leads" message —
+  // preview needs no manager Start, so there's nothing to gate on here.
+  useEffect(() => {
+    if (!isPreviewMode || status === "manual_dial" || callState !== "waiting") return;
+    loadPreviewLead();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPreviewMode, status, callState, campaign?.id]);
+
+  // A dial attempt (successful or not) always ends the review step — reset
+  // so the next time "waiting" is reached (a fresh lead, or back from a
+  // completed call) starts clean rather than re-showing a stale flag.
+  useEffect(() => {
+    setPreviewDialing(false);
+  }, [callState]);
+
+  const handlePreviewNext = () => {
+    if (previewLoading) return;
+    loadPreviewLead(previewLead?.id);
+  };
+
+  const handlePreviewDial = () => {
+    if (!previewLead || previewDialing || previewLoading) return;
+    setPreviewDialing(true);
+    dialerService
+      .previewDial(campaign.id, previewLead.id)
+      .then((res) => {
+        const callId = res?.data?.call?.id;
+        if (callId) {
+          setActiveCallId(callId);
+          recording?.setCallContext?.({ callId, toNumber: previewLead.phone, direction: "outbound" });
+        }
+        // Nothing else to do here — the agent's own leg now rings via the
+        // same Telnyx-dialed-agent-leg path progressive mode already uses,
+        // surfaced by the existing IncomingCallPanel/softphone machinery,
+        // and the existing agent/current-call poll picks up the real call
+        // row (and its real, event-driven status) the moment it exists.
+      })
+      .catch((err) => {
+        notify(err?.message || "Unable to start call.", "error");
+        setPreviewDialing(false);
+        // The failed attempt already released the reservation server-side
+        // (see dialPreviewLead in dialingEngine.js) — this lead is no
+        // longer actually held for this agent, so refresh rather than
+        // leave a stale, no-longer-valid lead on screen.
+        loadPreviewLead();
+      });
+  };
+
   // The click just hangs up the real call — the bridge effect above is
   // what actually moves callState to "wrapup" once onCallHangup confirms
   // the session really ended.
@@ -575,40 +921,35 @@ export default function AgentDashboard() {
       notify("Schedule a callback time before submitting.", "warning");
       return;
     }
-    if (activeDIDId) {
-      recordCallOutcome(activeDIDId, {
-        answered: dispositionKey !== "no_answer",
-        rejected: false,
-        durationSec: callSeconds,
-        disposition: dispositionKey,
-        dncRequest: dispositionKey === "dnc",
-        complaint: false,
+
+    const dbName = REVERSE_DISPOSITION_MAP[dispositionKey] || dispositionKey;
+    const label = dispositions.find((d) => d.key === dbName)?.label || dbName;
+    const callId = activeCallId;
+
+    // The real write: calls.disposition, the lead's status/last_disposition,
+    // and (for a Do Not Call disposition) the shared DNC list, all happen
+    // server-side in one request. DID reputation is recalculated from the
+    // calls table this feeds, so there is no separate client-side score to
+    // keep in sync with it.
+    if (callId) {
+      callService.disposition(callId, dbName, notes || undefined).catch((err) => {
+        notify(err?.message || "Could not save the disposition — it may not have been recorded.", "error");
       });
+    } else {
+      console.warn("[dialer] submitting disposition with no active call id — nothing will be recorded server-side.");
     }
-    if (isManualCall) {
-      const dispositionInfo = dispositions.find((d) => d.key === dispositionKey);
-      logManualDialCall({
-        agentName: user.name,
-        leadName: lead.fullName,
-        phone: lead.phone,
-        duration: formatDuration(callSeconds),
-        disposition: dispositionInfo?.label,
-        dispositionColor: dispositionInfo?.color,
-        campaign: campaign?.name,
-      });
-    }
-    notify(`Call logged as "${dispositions.find((d) => d.key === dispositionKey)?.label}".`, "success", {
-      title: "Disposition Submitted",
-    });
+
+    notify(`Call logged as "${label}".`, "success", { title: "Disposition Submitted" });
     setCallState("waiting");
     setCallSeconds(0);
     setWrapSeconds(0);
     setScheduledCallbackAt(null);
     setIsManualCall(false);
     setActiveDIDId(null);
-    // Only moves the needle when this disposition corresponds to a real
-    // backend call record (e.g. from an actual dialer-engine campaign) —
-    // the on-screen call simulation itself doesn't create one.
+    setActiveCallId(null);
+    // Back to a blank contact so the next progressive call's lead (or the
+    // next manual dial) starts clean rather than showing the previous one.
+    setLead(buildEmptyLead());
     refreshStats();
   };
 
@@ -652,24 +993,44 @@ export default function AgentDashboard() {
     navigate("/agent/login");
   };
 
-  const handleScheduleCallback = (scheduledAt, timezone) => {
-    addCallback({ agentName: user.name, leadName: lead.fullName, phone: lead.phone, scheduledAt, timezone });
-    setScheduledCallbackAt(scheduledAt);
-    notify(`Callback scheduled for ${new Date(scheduledAt).toLocaleString()}.`, "success", { title: "Callback Scheduled" });
+  const handleScheduleCallback = async (scheduledAt, timezone) => {
+    try {
+      await adminService.createCallback({
+        lead_id: lead.id || null,
+        campaign_id: campaign?.id || null,
+        scheduled_for: new Date(scheduledAt).toISOString(),
+        timezone,
+      });
+      setScheduledCallbackAt(scheduledAt);
+      await refreshMyCallbacks();
+      notify(`Callback scheduled for ${new Date(scheduledAt).toLocaleString()}.`, "success", { title: "Callback Scheduled" });
+    } catch (err) {
+      // Left unscheduled rather than shown as booked: an agent who is told a
+      // callback is set must not be the only one who thinks so.
+      notify(err?.response?.data?.message || "Could not schedule that callback.", "error");
+    }
   };
 
-  const handleDialNowPopup = () => {
-    if (!activeDuePopup) return;
-    updateCallbackStatus(activeDuePopup.id, "Completed", { completedAt: Date.now() });
-    notify(`Marked callback with ${activeDuePopup.leadName} as completed.`, "success");
-    setActiveDuePopup(null);
+  const handleDialNowPopup = async () => {
+    if (!dueCallback) return;
+    try {
+      await resolveCallback(dueCallback.id, { status: "completed", popup_shown: true });
+      await refreshMyCallbacks();
+      notify("Callback marked as completed.", "success");
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not update that callback.", "error");
+    }
   };
 
-  const handleDismissPopup = () => {
-    if (!activeDuePopup) return;
-    updateCallbackStatus(activeDuePopup.id, "Dismissed", { dismissedAt: Date.now() });
-    notify("Callback dismissed — this is logged for your admin.", "warning");
-    setActiveDuePopup(null);
+  const handleDismissPopup = async () => {
+    if (!dueCallback) return;
+    try {
+      await dismissCallbackPopup(dueCallback.id, { onCall: callState === "on_call" });
+      await refreshMyCallbacks();
+      notify("Callback dismissed — this is logged for your admin.", "warning");
+    } catch (err) {
+      notify(err?.response?.data?.message || "Could not dismiss that callback.", "error");
+    }
   };
 
   const updateLeadField = (key, value) => setLead((l) => ({ ...l, [key]: value }));
@@ -698,7 +1059,7 @@ export default function AgentDashboard() {
           autoLogoutCount,
         }}
         leaderboard={leaderboardData}
-        myCallbacks={callbacks.filter((c) => c.agentName === user.name).slice(0, 5)}
+        myCallbacks={myCallbacks.slice(0, 5)}
       />
 
       <AgentLeaderboardPanel open={openPanel === "leaderboard"} onClose={closePanel} currentAgentName={user.name} />
@@ -724,6 +1085,24 @@ export default function AgentDashboard() {
                 onDial={handleDial}
                 dialing={dialing}
                 registered={softphone.status === "registered"}
+                dialerState={dialerState}
+                parallelSettings={parallelSettings}
+                parallelStatus={parallelStatus}
+                onParallelDialsChange={handleParallelDialsChange}
+                statsToday={statsToday}
+                dialingMode={campaign?.dialing_mode}
+                leadLayout={campaign?.lead_layout}
+                isPreviewMode={isPreviewMode}
+                previewLead={previewLead}
+                previewMessage={previewMessage}
+                previewLoading={previewLoading}
+                previewDialing={previewDialing}
+                onPreviewDial={handlePreviewDial}
+                onPreviewNext={handlePreviewNext}
+                smsEnabled={Boolean(campaign?.sms_enabled)}
+                emailEnabled={Boolean(campaign?.email_enabled)}
+                onOpenSms={() => setSmsOpen(true)}
+                onOpenEmail={() => setEmailOpen(true)}
               />
             )}
 
@@ -752,12 +1131,15 @@ export default function AgentDashboard() {
                 onEndCall={handleEndCall}
                 smsEnabled={Boolean(campaign?.sms_enabled)}
                 onOpenSms={() => setSmsOpen(true)}
+                emailEnabled={Boolean(campaign?.email_enabled)}
+                onOpenEmail={() => setEmailOpen(true)}
                 onViewProperty={handleViewProperty}
                 onOpenAvailability={() => setAvailabilityOpen(true)}
                 outboundNumber={phoneNumbers.find((d) => d.id === activeDIDId)?.number}
                 hotkeys={hotkeys}
                 dtmfInput={dtmfInput}
                 onDtmfInputChange={handleDtmfInputChange}
+                leadLayout={campaign?.lead_layout}
               />
             )}
 
@@ -772,6 +1154,7 @@ export default function AgentDashboard() {
                   setDisposition(key);
                   if (key !== "callback") setScheduledCallbackAt(null);
                 }}
+                dispositions={dispositions}
                 notes={notes}
                 setNotes={setNotes}
                 onSubmit={handleSubmitDisposition}
@@ -790,19 +1173,33 @@ export default function AgentDashboard() {
         <BottomBar campaignName={campaign?.name} status={status} statusSince={statusSince} />
       </div>
 
-      <CallbackPopup callback={activeDuePopup} onDialNow={handleDialNowPopup} onDismiss={handleDismissPopup} />
+      <CallbackPopup callback={dueCallback} onDialNow={handleDialNowPopup} onDismiss={handleDismissPopup} />
 
       <SidePanel
         open={smsOpen}
         onClose={() => setSmsOpen(false)}
         title="Send Confirmation SMS"
-        subtitle="Call continues while you send this"
+        subtitle={activeCallId ? "Call continues while you send this" : "No call needed — send this now"}
       >
         <SmsForm
           campaign={campaign}
           lead={lead}
           callId={activeCallId}
           onSent={() => setSmsSent(true)}
+        />
+      </SidePanel>
+
+      <SidePanel
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        title="Send Email"
+        subtitle={activeCallId ? "Call continues while you send this" : "No call needed — send this now"}
+      >
+        <EmailComposer
+          campaign={campaign}
+          lead={lead}
+          callId={activeCallId}
+          onSent={() => {}}
         />
       </SidePanel>
 
@@ -827,6 +1224,24 @@ function WaitingState({
   onDial,
   dialing,
   registered,
+  dialerState,
+  parallelSettings,
+  parallelStatus,
+  onParallelDialsChange,
+  statsToday,
+  dialingMode,
+  leadLayout,
+  isPreviewMode,
+  previewLead,
+  previewMessage,
+  previewLoading,
+  previewDialing,
+  onPreviewDial,
+  onPreviewNext,
+  smsEnabled,
+  emailEnabled,
+  onOpenSms,
+  onOpenEmail,
 }) {
   if (status === "manual_dial") {
     return (
@@ -845,16 +1260,83 @@ function WaitingState({
     );
   }
 
+  // Preview is agent-driven and needs no manager Start — it gets its own
+  // card (lead + DIAL + NEXT) whenever the selected campaign is a preview
+  // campaign. The card itself shows whatever the backend reports: the
+  // current lead, "no more leads", or "a manager has paused this campaign".
+  if (isPreviewMode) {
+    return (
+      <div className="space-y-5">
+        <PreviewDialerCard
+          lead={previewLead}
+          message={previewMessage}
+          loading={previewLoading}
+          dialing={previewDialing}
+          onDial={onPreviewDial}
+          onNext={onPreviewNext}
+          registered={registered}
+          leadLayout={leadLayout}
+          smsEnabled={smsEnabled}
+          emailEnabled={emailEnabled}
+          onOpenSms={onOpenSms}
+          onOpenEmail={onOpenEmail}
+        />
+        <div className="card flex flex-col items-center gap-3 py-6">
+          <StatusSelector
+            status={status}
+            statusSince={statusSince}
+            statusMenuOpen={statusMenuOpen}
+            setStatusMenuOpen={setStatusMenuOpen}
+            onStatusChange={onStatusChange}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  const msg = dialerWaitingMessage(dialerState);
+  const dotColor =
+    msg.tone === "danger"
+      ? "var(--color-danger)"
+      : msg.tone === "warning"
+        ? "var(--color-warning)"
+        : "var(--color-info)";
+  const tintColor =
+    msg.tone === "danger"
+      ? "var(--color-danger-tint)"
+      : msg.tone === "warning"
+        ? "var(--color-warning-tint)"
+        : "var(--color-info-tint)";
+  const running = dialerState?.state === "running" || dialerState?.state === "waiting_for_agent";
+
   return (
     <div className="card flex flex-col items-center justify-center gap-4 py-16">
       <div className="relative flex h-24 w-24 items-center justify-center">
-        <span className="absolute inset-0 animate-pulse-slow rounded-full bg-[var(--color-info-tint)]" />
-        <span className="relative h-4 w-4 rounded-full bg-[var(--color-info)]" />
+        <span
+          className={`absolute inset-0 rounded-full ${running ? "animate-pulse-slow" : ""}`}
+          style={{ backgroundColor: tintColor }}
+        />
+        <span className="relative h-4 w-4 rounded-full" style={{ backgroundColor: dotColor }} />
       </div>
       <div className="text-center">
-        <p className="text-lg font-semibold text-[var(--color-text-primary)]">Waiting for campaign to start...</p>
-        <p className="text-sm text-[var(--color-text-tertiary)]">You'll be connected automatically once the dialer has a call for you</p>
+        <p className="text-lg font-semibold text-[var(--color-text-primary)]">{msg.title}</p>
+        <p className="mx-auto max-w-sm text-sm text-[var(--color-text-tertiary)]">{msg.hint}</p>
+        {dialerState && (dialerState.state === "running" || dialerState.state === "waiting_for_agent") && (
+          <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
+            {dialerState.leads_remaining?.toLocaleString?.() ?? dialerState.leads_remaining} leads remaining ·{" "}
+            {dialerState.agents_available} agent{dialerState.agents_available === 1 ? "" : "s"} available
+          </p>
+        )}
       </div>
+
+      {parallelSettings?.parallel_dialing_enabled && dialingMode === "parallel" && (
+        <ParallelDialingPanel
+          parallelSettings={parallelSettings}
+          parallelStatus={parallelStatus}
+          onParallelDialsChange={onParallelDialsChange}
+          statsToday={statsToday}
+        />
+      )}
 
       <StatusSelector
         status={status}
@@ -863,6 +1345,196 @@ function WaitingState({
         setStatusMenuOpen={setStatusMenuOpen}
         onStatusChange={onStatusChange}
       />
+    </div>
+  );
+}
+
+// Preview Dialing's core screen: one lead, reviewed before the agent
+// decides to call it. `lead` is only ever the one currently reserved to
+// this agent (see getNextPreviewLead in dialingEngine.js) — never a list,
+// never preloaded ahead, matching spec's "one lead at a time" requirement.
+function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered, leadLayout, smsEnabled, emailEnabled, onOpenSms, onOpenEmail }) {
+  const busy = loading || dialing;
+
+  if (!lead) {
+    const noMoreLeads = message === "No more leads available.";
+    return (
+      <div className="card flex flex-col items-center justify-center gap-3 py-16 text-center">
+        <PhoneCall size={32} className="text-[var(--color-text-tertiary)]" />
+        <p className="text-lg font-semibold text-[var(--color-text-primary)]">
+          {loading ? "Loading next lead…" : message || "No lead loaded"}
+        </p>
+        {!loading && noMoreLeads && (
+          <p className="mx-auto max-w-sm text-sm text-[var(--color-text-tertiary)]">
+            Every lead in this campaign has been dialed, is on the Do Not Call list, or isn't currently callable.
+          </p>
+        )}
+        {!loading && (
+          <button onClick={onNext} className="btn-outline mt-2 flex items-center gap-2">
+            <RefreshCw size={14} /> Check again
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const isVacation = leadLayout === "vacation";
+
+  return (
+    <div className="card space-y-5 py-8 text-center">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">Current Lead</p>
+        <p className="mt-1 text-2xl font-semibold text-[var(--color-text-primary)]">{lead.fullName}</p>
+        {isVacation && lead.age != null && (
+          <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">Age {lead.age}</p>
+        )}
+        {(lead.city || lead.state) && (
+          <p className="mt-1 flex items-center justify-center gap-1 text-sm text-[var(--color-text-tertiary)]">
+            <MapPin size={13} /> {[lead.city, lead.state].filter(Boolean).join(", ")}
+          </p>
+        )}
+        <p className="mt-1 text-lg text-[var(--color-text-secondary)]">{lead.phone || "No phone number on file"}</p>
+
+        {isVacation && (lead.lastTravelDate || lead.lastTravelDestination) && (
+          <div className="mx-auto mt-3 max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-left">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Travel History</p>
+            {lead.lastTravelDate && (
+              <p className="mt-1 text-sm text-[var(--color-text-primary)]">
+                <span className="text-[var(--color-text-tertiary)]">Last traveled:</span> {lead.lastTravelDate}
+              </p>
+            )}
+            {lead.lastTravelDestination && (
+              <p className="mt-0.5 text-sm text-[var(--color-text-primary)]">
+                <span className="text-[var(--color-text-tertiary)]">Last destination:</span> {lead.lastTravelDestination}
+              </p>
+            )}
+          </div>
+        )}
+
+        <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
+          Called {lead.timesCalled || 0}x · Last outcome: {lead.lastDisposition}
+        </p>
+      </div>
+
+      <div className="flex flex-col items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
+          {dialing ? "Calling…" : "Ready"}
+        </span>
+      </div>
+
+      <div className="mx-auto flex max-w-xs flex-col gap-3">
+        <button
+          onClick={onDial}
+          disabled={busy || !registered}
+          className="btn-purple flex items-center justify-center gap-2 py-3 text-base"
+          title={!registered ? "Softphone is not registered yet" : undefined}
+        >
+          <PhoneCall size={18} /> {dialing ? "Calling…" : "Dial"}
+        </button>
+        <button onClick={onNext} disabled={busy} className="btn-outline flex items-center justify-center gap-2 py-3 text-base">
+          Next <ChevronDown size={16} className="-rotate-90" />
+        </button>
+
+        {/* Pre-call communication — the agent can text or email this lead
+            before deciding to dial, and it never places a call or counts as
+            an attempt (spec parts 1, 2, 15). Only shown for channels the
+            campaign has enabled. */}
+        {lead?.id && (smsEnabled || emailEnabled) && (
+          <div className="mt-1 border-t border-[var(--color-border)] pt-3">
+            <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
+              Or reach out first — no call needed
+            </p>
+            <div className={`grid gap-2 ${smsEnabled && emailEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
+              {smsEnabled && (
+                <button onClick={onOpenSms} className="btn-outline flex items-center justify-center gap-2 py-2.5">
+                  <MessageSquareText size={15} /> Text
+                </button>
+              )}
+              {emailEnabled && (
+                <button onClick={onOpenEmail} className="btn-outline flex items-center justify-center gap-2 py-2.5">
+                  <Mail size={15} /> Email
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The Parallel Dialing controls + live indicator, shown on the waiting
+// screen whenever the company has parallel dialing turned on. Three real,
+// server-backed things live here — none of it a client-side simulation:
+//   - Parallel Dials: this agent's own setting (GET/POST /agent/parallel-dials),
+//     options capped at the admin's configured maximum.
+//   - Active Calls: how many of the agent's current batch are still
+//     actually ringing right now (GET /agent/parallel-status, polled every
+//     2s) — reflects real open call rows, not the configured target.
+//   - Calls Made Today / Connected Today: the same real figures already
+//     shown in the stats panel, surfaced here too per spec.
+function ParallelDialingPanel({ parallelSettings, parallelStatus, onParallelDialsChange, statsToday }) {
+  const options = Array.from({ length: parallelSettings.max_parallel_dials || 5 }, (_, i) => i + 1);
+  const activeCalls = parallelStatus?.active_calls || 0;
+  const requested = parallelStatus?.requested_count || 0;
+
+  return (
+    <div className="w-full max-w-xs rounded-lg border border-[var(--color-border)] bg-white p-4 text-left">
+      <div className="mb-3 flex items-center justify-between">
+        <label className="text-xs font-medium text-[var(--color-text-secondary)]">Parallel Dials</label>
+        <select
+          value={parallelSettings.parallel_dials}
+          onChange={(e) => onParallelDialsChange(Number(e.target.value))}
+          className="input-field w-20 py-1 text-sm"
+        >
+          {options.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* The visual indicator: a phone icon with one pip per requested slot
+          in this batch, filled for a slot that's still actually ringing and
+          hollow once it has resolved — so it moves in real time as legs
+          answer, go to voicemail, or ring out, rather than just showing the
+          configured target the whole time. */}
+      <div className="mb-3 flex items-center gap-2">
+        <PhoneCall size={16} className={activeCalls > 0 ? "text-[var(--color-accent)]" : "text-[var(--color-text-tertiary)]"} />
+        <div className="flex items-center gap-1">
+          {requested > 0 ? (
+            Array.from({ length: requested }, (_, i) => (
+              <span
+                key={i}
+                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold transition-colors duration-300 ${
+                  i < activeCalls
+                    ? "animate-pulse-slow bg-[var(--color-accent)] text-white"
+                    : "bg-[var(--color-bg)] text-[var(--color-text-tertiary)]"
+                }`}
+              >
+                {i + 1}
+              </span>
+            ))
+          ) : (
+            <span className="text-xs text-[var(--color-text-tertiary)]">No active dials</span>
+          )}
+        </div>
+        {activeCalls > 0 && (
+          <span className="ml-1 text-xs font-medium text-[var(--color-accent)]">
+            {activeCalls} ACTIVE DIAL{activeCalls === 1 ? "" : "S"}
+          </span>
+        )}
+      </div>
+
+      <div className="flex gap-2 border-t border-[var(--color-border)] pt-3 text-center">
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">{statsToday?.calls ?? 0}</p>
+          <p className="text-[10px] text-[var(--color-text-tertiary)]">Calls Made Today</p>
+        </div>
+        <div className="flex-1 border-l border-[var(--color-border)]">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">{statsToday?.connects ?? 0}</p>
+          <p className="text-[10px] text-[var(--color-text-tertiary)]">Connected Today</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -969,13 +1641,17 @@ function ConnectedState({
   onEndCall,
   smsEnabled,
   onOpenSms,
+  emailEnabled,
+  onOpenEmail,
   onViewProperty,
   onOpenAvailability,
   outboundNumber,
   hotkeys,
   dtmfInput,
   onDtmfInputChange,
+  leadLayout,
 }) {
+  const isVacation = leadLayout === "vacation";
   const ringColor = getStatusVisual("on_call", callSeconds).color;
 
   return (
@@ -998,8 +1674,21 @@ function ConnectedState({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <LeadField label="Full Name" value={lead.fullName} onChange={(v) => onUpdateField("fullName", v)} />
           <LeadField label="Phone Number" value={lead.phone} onChange={(v) => onUpdateField("phone", v)} />
-          <LeadField label="Email Address" value={lead.email} onChange={(v) => onUpdateField("email", v)} className="sm:col-span-2" />
+          {isVacation && (
+            <LeadField label="Age" value={lead.age ?? ""} onChange={(v) => onUpdateField("age", v)} />
+          )}
+          <LeadField label="Email Address" value={lead.email} onChange={(v) => onUpdateField("email", v)} className={isVacation ? "" : "sm:col-span-2"} />
         </div>
+
+        {isVacation && (
+          <>
+            <h3 className="mb-3 mt-5 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Travel History</h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <LeadField label="Last Traveled" value={lead.lastTravelDate} placeholder="e.g. June 2025" onChange={(v) => onUpdateField("lastTravelDate", v)} />
+              <LeadField label="Last Destination" value={lead.lastTravelDestination} placeholder="e.g. Cancun, Mexico" onChange={(v) => onUpdateField("lastTravelDestination", v)} />
+            </div>
+          </>
+        )}
 
         <div className="mb-3 mt-5 flex items-center justify-between">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Address Details</h3>
@@ -1064,10 +1753,19 @@ function ConnectedState({
           />
         </div>
         <div className="mt-2.5 space-y-2">
-          {smsEnabled && (
-            <button onClick={onOpenSms} className="btn-outline w-full">
-              <MessageSquareText size={15} /> Send Confirmation SMS
-            </button>
+          {(smsEnabled || emailEnabled) && (
+            <div className={`grid gap-2 ${smsEnabled && emailEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
+              {smsEnabled && (
+                <button onClick={onOpenSms} className="btn-outline w-full">
+                  <MessageSquareText size={15} /> Text
+                </button>
+              )}
+              {emailEnabled && (
+                <button onClick={onOpenEmail} className="btn-outline w-full">
+                  <Mail size={15} /> Email
+                </button>
+              )}
+            </div>
           )}
           <button onClick={onOpenAvailability} className="btn-outline w-full">
             <CalendarDays size={15} /> Availability
@@ -1098,6 +1796,7 @@ function WrapupState({
   wrap,
   disposition,
   setDisposition,
+  dispositions,
   notes,
   setNotes,
   onSubmit,
@@ -1208,12 +1907,64 @@ function DispositionButton({ d, selected, onClick, large = false }) {
 // old mock script used — so this renders real script text as-is (with
 // the same {agent_name}/{lead_name}/{location} substitution) instead of
 // simulating a structured outline the API doesn't provide.
+// Splits a script's raw content into named sections wherever it uses
+// Markdown-style headers (# or ##) — e.g. "## Opening", "## Objections".
+// This is deliberately just a split on the document's own headers rather
+// than a rewrite into a fixed schema: whatever section names and order the
+// uploaded script actually used are exactly what gets preserved and
+// navigated, nothing invented or reordered. A script with no headers at
+// all (every script in this system before this feature) comes back as one
+// unnamed section, so the panel still renders it exactly as before.
+function parseScriptSections(content) {
+  const text = content || "";
+  const headerRe = /^#{1,3}\s+(.+?)\s*$/;
+
+  const sections = [];
+  let current = { title: null, body: [] }; // text before the first header, if any
+  for (const line of text.split("\n")) {
+    const m = headerRe.exec(line);
+    if (m) {
+      sections.push(current);
+      current = { title: m[1], body: [] };
+    } else {
+      current.body.push(line);
+    }
+  }
+  sections.push(current);
+
+  return sections
+    .map((s) => ({ title: s.title, body: s.body.join("\n").trim() }))
+    .filter((s) => s.title || s.body); // drop an empty leading preamble
+}
+
 function ScriptPanel({ agentName, lead, script, loaded, expanded = false }) {
   const fill = (text) =>
     (text || "")
       .replaceAll("{agent_name}", agentName)
       .replaceAll("{lead_name}", lead.fullName)
       .replaceAll("{location}", `${lead.city}, ${lead.state}`);
+
+  const sections = script ? parseScriptSections(script.content) : [];
+  const hasNamedSections = sections.some((s) => s.title);
+  const [openSections, setOpenSections] = useState(null); // null = "everything open" (default)
+  // A different script (campaign switch, or the assigned one being changed)
+  // must not inherit stale collapsed/expanded indices from the last one.
+  useEffect(() => {
+    setOpenSections(null);
+  }, [script?.id]);
+  const isOpen = (i) => openSections === null || openSections.has(i);
+  const toggleSection = (i) => {
+    setOpenSections((prev) => {
+      const next = new Set(prev ?? sections.map((_, idx) => idx));
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+  const jumpTo = (i) => {
+    if (openSections !== null && !openSections.has(i)) toggleSection(i);
+    document.getElementById(`script-section-${i}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
     <div
@@ -1235,16 +1986,62 @@ function ScriptPanel({ agentName, lead, script, loaded, expanded = false }) {
 
       {loaded && script && (
         <>
-          <p className={`mb-3 font-semibold text-[var(--color-text-primary)] transition-all duration-300 ${expanded ? "text-lg" : "text-base"}`}>
-            {script.title}
-          </p>
-          <p
-            className={`whitespace-pre-wrap rounded-lg bg-[var(--color-bg)] p-4 leading-relaxed text-[var(--color-text-primary)] transition-all duration-300 ${
-              expanded ? "text-[17px]" : "text-[15px]"
-            }`}
-          >
-            {fill(script.content)}
-          </p>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className={`font-semibold text-[var(--color-text-primary)] transition-all duration-300 ${expanded ? "text-lg" : "text-base"}`}>
+              {script.title}
+            </p>
+            {hasNamedSections && (
+              <button
+                onClick={() => setOpenSections(openSections === null ? new Set() : null)}
+                className="shrink-0 text-xs font-medium text-[var(--color-accent)] hover:underline"
+              >
+                {openSections === null ? "Collapse all" : "Expand all"}
+              </button>
+            )}
+          </div>
+
+          {/* Jump nav — only worth showing once the script actually has more
+              than one named section to navigate between. */}
+          {hasNamedSections && sections.length > 1 && (
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {sections.map((s, i) =>
+                s.title ? (
+                  <button
+                    key={i}
+                    onClick={() => jumpTo(i)}
+                    className="pill border border-[var(--color-accent)]/25 bg-[var(--color-accent-tint)] text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)] hover:text-white"
+                  >
+                    {s.title}
+                  </button>
+                ) : null
+              )}
+            </div>
+          )}
+
+          <div className="space-y-2.5">
+            {sections.map((s, i) => (
+              <div key={i} id={`script-section-${i}`} className="overflow-hidden rounded-lg bg-[var(--color-bg)]">
+                {s.title && (
+                  <button
+                    onClick={() => toggleSection(i)}
+                    className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-semibold text-[var(--color-text-primary)] hover:bg-black/[0.02]"
+                  >
+                    {s.title}
+                    <ChevronDown size={14} className={`text-[var(--color-text-tertiary)] transition-transform duration-200 ${isOpen(i) ? "rotate-180" : ""}`} />
+                  </button>
+                )}
+                {isOpen(i) && s.body && (
+                  <p
+                    className={`whitespace-pre-wrap leading-relaxed text-[var(--color-text-primary)] transition-all duration-300 ${
+                      s.title ? "px-4 pb-4" : "p-4"
+                    } ${expanded ? "text-[17px]" : "text-[15px]"}`}
+                  >
+                    {fill(s.body)}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
         </>
       )}
     </div>
