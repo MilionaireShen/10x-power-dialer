@@ -280,7 +280,9 @@ function LeadDetail({ leadId, onClose }) {
               : emails.map((e) => (
                 <div key={e.id} className="border-b border-[var(--color-border)] py-2 text-xs last:border-0">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-medium text-[var(--color-text-primary)]">{e.subject}</span>
+                    <span className="truncate font-medium text-[var(--color-text-primary)]">
+                      {e.email_type === "payment" ? "Payment Email — " : e.email_type === "information" ? "Information Email — " : ""}{e.subject}
+                    </span>
                     <EmailStatusPill status={e.status} />
                   </div>
                   <p className="mt-0.5 text-[var(--color-text-tertiary)]">
@@ -291,9 +293,15 @@ function LeadDetail({ leadId, onClose }) {
                     {e.delivered_at && <span>Delivered {new Date(e.delivered_at).toLocaleTimeString()}</span>}
                     {e.first_opened_at && <span>Opened {new Date(e.first_opened_at).toLocaleTimeString()}{e.open_count > 1 ? ` (${e.open_count}×)` : ""}</span>}
                     {e.first_clicked_at && <span>Clicked {new Date(e.first_clicked_at).toLocaleTimeString()}{e.click_count > 1 ? ` (${e.click_count}×)` : ""}</span>}
+                    {e.payment_link_first_clicked_at && (
+                      <span className="font-medium text-[var(--color-success)]">
+                        Stripe payment link clicked {new Date(e.payment_link_first_clicked_at).toLocaleTimeString()}
+                        {e.payment_link_click_count > 1 ? ` (${e.payment_link_click_count}×)` : ""}
+                      </span>
+                    )}
                     {e.bounced_at && <span className="text-[var(--color-danger)]">Bounced</span>}
                     {e.failed_at && <span className="text-[var(--color-danger)]">Failed{e.failed_reason ? ` — ${e.failed_reason}` : ""}</span>}
-                    {e.payment_link && <span>Payment link sent</span>}
+                    {e.payment_link && !e.payment_link_first_clicked_at && <span>Payment link included</span>}
                   </div>
                 </div>
               ))}

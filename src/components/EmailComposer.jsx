@@ -1,25 +1,52 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mail, AlertTriangle, Eye, Send } from "lucide-react";
+import { Mail, AlertTriangle, Eye, Send, Info, CreditCard, ChevronLeft } from "lucide-react";
 import { useToast } from "../lib/ToastContext";
 import emailService from "../services/emailService";
 
 // The agent's email composer — opens inside the dialer next to the SMS
-// panel, already knowing the current lead. It never talks to Telnyx: it
-// asks the server to render the chosen template against the real lead +
-// the order values below, shows that exact preview, and sends the same
-// thing. The preview renders in a sandboxed iframe so template HTML can
-// never run script in the dialer.
+// panel, already knowing the current lead. It works before a call is
+// placed (no callId) exactly as it does mid-call. It never talks to the
+// provider: it asks the server to render the chosen template against the
+// real lead + the order values below, shows that exact preview, and sends
+// the same thing. The preview renders in a sandboxed iframe so template
+// HTML can never run script in the dialer.
+//
+// Two purposes (spec parts 3-5):
+//   - "Vacation Information" — enough to make a decision, no payment link.
+//   - "Payment Information"  — for a decided customer, MUST carry a valid
+//     customer-specific Stripe payment link or the send is blocked.
 
 const ORDER_FIELDS = [
   { key: "package_name", label: "Package name", placeholder: "Cancun All-Inclusive 5-Night" },
   { key: "package_price", label: "Package price", placeholder: "$799" },
-  { key: "guest_count", label: "Guests", placeholder: "2" },
+  { key: "guest_count", label: "Guests / travelers", placeholder: "2" },
   { key: "destination", label: "Destination", placeholder: "Cancun, Mexico" },
   { key: "travel_date", label: "Travel date", placeholder: "March 14, 2026" },
 ];
 
-export default function EmailComposer({ campaign, lead, callId, onSent }) {
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Mirrors isValidStripePaymentLink() in the backend (emailSendService.js).
+// The backend is authoritative — this only lets the agent see the problem
+// before they hit Send.
+function isValidStripeLink(url) {
+  if (typeof url !== "string" || !url.trim()) return false;
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === "https:" && /(^|\.)stripe\.com$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+const TYPE_META = {
+  information: { label: "Vacation Information", icon: Info, blurb: "Package details to help them decide. No payment link." },
+  payment: { label: "Payment Information", icon: CreditCard, blurb: "For a customer ready to pay. Needs their Stripe payment link." },
+};
+
+export default function EmailComposer({ campaign, lead, callId, onSent, presetType = null }) {
   const { notify } = useToast();
+  const [emailType, setEmailType] = useState(presetType);
   const [templates, setTemplates] = useState([]);
   const [templateId, setTemplateId] = useState("");
   const [order, setOrder] = useState({});
@@ -30,25 +57,46 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
   const [sending, setSending] = useState(false);
   const [sentMessageId, setSentMessageId] = useState(null);
   const [sentStatus, setSentStatus] = useState(null);
+  const [sentType, setSentType] = useState(null);
   const subjectTouched = useRef(false);
 
   const leadEmail = (lead?.email || "").trim();
-  const hasEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(leadEmail);
+  const hasEmail = EMAIL_RE.test(leadEmail);
+  const isPayment = emailType === "payment";
+  const paymentLinkOk = !isPayment || isValidStripeLink(paymentLink);
 
-  // Load this campaign's active templates; preselect the campaign default.
+  // Load this campaign's active templates once; the visible list is then
+  // narrowed to the chosen purpose, and the campaign's per-purpose template
+  // (or its generic default) is preselected.
   useEffect(() => {
     if (!campaign?.id) return;
     emailService
       .listTemplates({ campaign_id: campaign.id, active_only: "true" })
-      .then((res) => {
-        const list = res?.data?.templates || [];
-        setTemplates(list);
-        const preferred = campaign.email_default_template_id
-          && list.find((t) => t.id === campaign.email_default_template_id);
-        setTemplateId(preferred ? preferred.id : list[0]?.id || "");
-      })
+      .then((res) => setTemplates(res?.data?.templates || []))
       .catch(() => setTemplates([]));
-  }, [campaign?.id, campaign?.email_default_template_id]);
+  }, [campaign?.id]);
+
+  const templatesForType = useMemo(() => {
+    if (!emailType) return templates;
+    const wantPayment = emailType === "payment";
+    const matches = templates.filter((t) =>
+      wantPayment ? t.category === "payment_instructions" : t.category !== "payment_instructions"
+    );
+    // If nothing is categorised, don't hide everything — show all.
+    return matches.length ? matches : templates;
+  }, [templates, emailType]);
+
+  // Pick the template when the purpose (or the loaded list) changes.
+  useEffect(() => {
+    if (!emailType || templates.length === 0) return;
+    const preferredId =
+      (emailType === "payment"
+        ? campaign?.email_payment_template_id
+        : campaign?.email_information_template_id) || campaign?.email_default_template_id;
+    const preferred = preferredId && templatesForType.find((t) => t.id === preferredId);
+    setTemplateId(preferred ? preferred.id : templatesForType[0]?.id || "");
+    subjectTouched.current = false;
+  }, [emailType, templates, templatesForType, campaign?.email_payment_template_id, campaign?.email_information_template_id, campaign?.email_default_template_id]);
 
   const orderPayload = useMemo(
     () => ({ ...order, ...(paymentLink.trim() ? { payment_link: paymentLink.trim() } : {}) }),
@@ -70,8 +118,6 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
       .then((res) => {
         const data = res?.data || null;
         setRendered(data);
-        // Keep the Subject field in sync with the template until the agent
-        // edits it themselves.
         if (data && !subjectTouched.current) setSubject(data.subject || "");
       })
       .catch((err) => notify(err?.response?.data?.message || "Could not render the preview.", "error"))
@@ -83,8 +129,8 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
     return () => clearTimeout(t);
   }, [runPreview]);
 
-  // Poll the send's real status once it's out (PART 22 — status comes from
-  // the backend/webhook, never a client timer).
+  // Poll the send's real status once it's out (status comes from the
+  // backend/webhook, never a client timer).
   useEffect(() => {
     if (!sentMessageId) return;
     let cancelled = false;
@@ -98,13 +144,14 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
   }, [sentMessageId]);
 
   const send = async () => {
-    if (!hasEmail) return;
+    if (!hasEmail || !paymentLinkOk) return;
     setSending(true);
     try {
       const res = await emailService.send({
         campaign_id: campaign.id,
         lead_id: lead.id,
         call_id: callId || null,
+        email_type: emailType,
         template_id: templateId,
         to: leadEmail,
         subject: subjectTouched.current ? subject : undefined,
@@ -113,7 +160,8 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
       const id = res?.data?.message?.id;
       setSentMessageId(id || null);
       setSentStatus(res?.data?.message?.status || "queued");
-      notify("Email sent.", "success");
+      setSentType(emailType);
+      notify(`${isPayment ? "Payment" : "Information"} email sent.`, "success");
       onSent?.();
     } catch (err) {
       notify(err?.response?.data?.message || "The email could not be sent.", "error");
@@ -128,7 +176,7 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
         <AlertTriangle size={28} className="text-[var(--color-warning)]" />
         <p className="text-sm font-medium text-[var(--color-text-primary)]">No email address is available for this lead.</p>
         <p className="max-w-xs text-xs text-[var(--color-text-tertiary)]">
-          Add the customer's email on the call screen first — an email can't be sent to an empty address.
+          Add the customer's email on the lead screen first — an email can't be sent to an empty address.
         </p>
       </div>
     );
@@ -139,18 +187,60 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
       <div className="space-y-4 py-6">
         <div className="flex flex-col items-center gap-2 text-center">
           <Mail size={28} className="text-[var(--color-success)]" />
-          <p className="text-sm font-medium text-[var(--color-text-primary)]">Email sent to {leadEmail}</p>
+          <p className="text-sm font-medium text-[var(--color-text-primary)]">
+            {sentType === "payment" ? "Payment" : "Information"} email sent to {leadEmail}
+          </p>
           <StatusRow status={sentStatus} />
           <p className="text-[11px] text-[var(--color-text-tertiary)]">
-            Delivery, opens and clicks update here from real tracking events, and stay on the lead timeline.
+            Delivery, opens{sentType === "payment" ? ", and the payment-link click" : " and clicks"} update here from real
+            tracking events, and stay on the lead timeline.
           </p>
         </div>
       </div>
     );
   }
 
+  // Step 1 — pick the purpose (spec part 5). Fast: two buttons.
+  if (!emailType) {
+    return (
+      <div className="space-y-3 py-2">
+        <p className="text-sm text-[var(--color-text-secondary)]">What kind of email is this?</p>
+        {["information", "payment"].map((key) => {
+          const { label, icon: Icon, blurb } = TYPE_META[key];
+          return (
+            <button
+              key={key}
+              onClick={() => setEmailType(key)}
+              className="flex w-full items-start gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 text-left transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent)]/5"
+            >
+              <Icon size={20} className="mt-0.5 shrink-0 text-[var(--color-accent)]" />
+              <span>
+                <span className="block text-sm font-semibold text-[var(--color-text-primary)]">{label}</span>
+                <span className="block text-xs text-[var(--color-text-tertiary)]">{blurb}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      {!presetType && (
+        <button
+          onClick={() => setEmailType(null)}
+          className="flex items-center gap-1 text-xs font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+        >
+          <ChevronLeft size={13} /> Change type
+        </button>
+      )}
+
+      <div className="flex items-center gap-2 rounded-lg bg-[var(--color-bg)] px-3 py-2">
+        {(() => { const Icon = TYPE_META[emailType].icon; return <Icon size={15} className="text-[var(--color-accent)]" />; })()}
+        <span className="text-sm font-medium text-[var(--color-text-primary)]">{TYPE_META[emailType].label}</span>
+      </div>
+
       <Field label="To">
         <input value={leadEmail} readOnly className="input-field bg-[var(--color-bg)]" />
       </Field>
@@ -164,9 +254,9 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
       </Field>
 
       <Field label="Template">
-        <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} className="input-field">
-          {templates.length === 0 && <option value="">No templates assigned to this campaign</option>}
-          {templates.map((t) => (
+        <select value={templateId} onChange={(e) => { subjectTouched.current = false; setTemplateId(e.target.value); }} className="input-field">
+          {templatesForType.length === 0 && <option value="">No templates assigned to this campaign</option>}
+          {templatesForType.map((t) => (
             <option key={t.id} value={t.id}>{t.name}</option>
           ))}
         </select>
@@ -185,17 +275,40 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
         ))}
       </div>
 
-      <Field label="Stripe payment link">
-        <input
-          value={paymentLink}
-          onChange={(e) => setPaymentLink(e.target.value)}
-          placeholder="https://buy.stripe.com/…"
-          className="input-field py-1.5 text-sm font-mono"
-        />
-        <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
-          Fills the {"{{payment_link}}"} button in the template. Defaults to the campaign's link; change it per send if needed.
-        </p>
-      </Field>
+      {isPayment ? (
+        <Field label="Stripe payment link (required)">
+          <input
+            value={paymentLink}
+            onChange={(e) => setPaymentLink(e.target.value)}
+            placeholder="https://buy.stripe.com/…"
+            className={`input-field py-1.5 text-sm font-mono ${paymentLink && !paymentLinkOk ? "border-[var(--color-danger)]" : ""}`}
+          />
+          {paymentLink && !paymentLinkOk ? (
+            <p className="mt-1 flex items-start gap-1.5 text-[11px] text-[var(--color-danger)]">
+              <AlertTriangle size={12} className="mt-px shrink-0" />
+              That isn't a valid Stripe link. Paste this customer's own payment link (buy.stripe.com / checkout.stripe.com).
+            </p>
+          ) : !paymentLink ? (
+            <p className="mt-1 flex items-start gap-1.5 text-[11px] text-[var(--color-warning)]">
+              <AlertTriangle size={12} className="mt-px shrink-0" />
+              A payment email can't be sent without this customer's Stripe payment link.
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+              Fills the {"{{payment_link}}"} button in the template. Its click is tracked on the lead separately.
+            </p>
+          )}
+        </Field>
+      ) : (
+        <Field label="Stripe payment link (optional)">
+          <input
+            value={paymentLink}
+            onChange={(e) => setPaymentLink(e.target.value)}
+            placeholder="Not needed for an information email"
+            className="input-field py-1.5 text-sm font-mono"
+          />
+        </Field>
+      )}
 
       <Field label="Subject">
         <input
@@ -232,10 +345,10 @@ export default function EmailComposer({ campaign, lead, callId, onSent }) {
         </button>
         <button
           onClick={send}
-          disabled={sending || !templateId || !subject.trim()}
+          disabled={sending || !templateId || !subject.trim() || !paymentLinkOk}
           className="btn-purple flex-[2] disabled:opacity-40"
         >
-          <Send size={14} /> {sending ? "Sending…" : "Send Email"}
+          <Send size={14} /> {sending ? "Sending…" : isPayment ? "Send Payment Email" : "Send Email"}
         </button>
       </div>
     </div>

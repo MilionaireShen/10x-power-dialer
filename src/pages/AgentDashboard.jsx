@@ -1099,6 +1099,10 @@ export default function AgentDashboard() {
                 previewDialing={previewDialing}
                 onPreviewDial={handlePreviewDial}
                 onPreviewNext={handlePreviewNext}
+                smsEnabled={Boolean(campaign?.sms_enabled)}
+                emailEnabled={Boolean(campaign?.email_enabled)}
+                onOpenSms={() => setSmsOpen(true)}
+                onOpenEmail={() => setEmailOpen(true)}
               />
             )}
 
@@ -1175,7 +1179,7 @@ export default function AgentDashboard() {
         open={smsOpen}
         onClose={() => setSmsOpen(false)}
         title="Send Confirmation SMS"
-        subtitle="Call continues while you send this"
+        subtitle={activeCallId ? "Call continues while you send this" : "No call needed — send this now"}
       >
         <SmsForm
           campaign={campaign}
@@ -1189,7 +1193,7 @@ export default function AgentDashboard() {
         open={emailOpen}
         onClose={() => setEmailOpen(false)}
         title="Send Email"
-        subtitle="Call continues while you send this"
+        subtitle={activeCallId ? "Call continues while you send this" : "No call needed — send this now"}
       >
         <EmailComposer
           campaign={campaign}
@@ -1234,6 +1238,10 @@ function WaitingState({
   previewDialing,
   onPreviewDial,
   onPreviewNext,
+  smsEnabled,
+  emailEnabled,
+  onOpenSms,
+  onOpenEmail,
 }) {
   if (status === "manual_dial") {
     return (
@@ -1268,6 +1276,10 @@ function WaitingState({
           onNext={onPreviewNext}
           registered={registered}
           leadLayout={leadLayout}
+          smsEnabled={smsEnabled}
+          emailEnabled={emailEnabled}
+          onOpenSms={onOpenSms}
+          onOpenEmail={onOpenEmail}
         />
         <div className="card flex flex-col items-center gap-3 py-6">
           <StatusSelector
@@ -1341,7 +1353,7 @@ function WaitingState({
 // decides to call it. `lead` is only ever the one currently reserved to
 // this agent (see getNextPreviewLead in dialingEngine.js) — never a list,
 // never preloaded ahead, matching spec's "one lead at a time" requirement.
-function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered, leadLayout }) {
+function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered, leadLayout, smsEnabled, emailEnabled, onOpenSms, onOpenEmail }) {
   const busy = loading || dialing;
 
   if (!lead) {
@@ -1422,6 +1434,30 @@ function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, re
         <button onClick={onNext} disabled={busy} className="btn-outline flex items-center justify-center gap-2 py-3 text-base">
           Next <ChevronDown size={16} className="-rotate-90" />
         </button>
+
+        {/* Pre-call communication — the agent can text or email this lead
+            before deciding to dial, and it never places a call or counts as
+            an attempt (spec parts 1, 2, 15). Only shown for channels the
+            campaign has enabled. */}
+        {lead?.id && (smsEnabled || emailEnabled) && (
+          <div className="mt-1 border-t border-[var(--color-border)] pt-3">
+            <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
+              Or reach out first — no call needed
+            </p>
+            <div className={`grid gap-2 ${smsEnabled && emailEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
+              {smsEnabled && (
+                <button onClick={onOpenSms} className="btn-outline flex items-center justify-center gap-2 py-2.5">
+                  <MessageSquareText size={15} /> Text
+                </button>
+              )}
+              {emailEnabled && (
+                <button onClick={onOpenEmail} className="btn-outline flex items-center justify-center gap-2 py-2.5">
+                  <Mail size={15} /> Email
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

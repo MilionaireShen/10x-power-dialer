@@ -41,6 +41,8 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
   const [leadLayoutSaving, setLeadLayoutSaving] = useState(false);
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [emailDefaultTemplateId, setEmailDefaultTemplateId] = useState("");
+  const [emailInformationTemplateId, setEmailInformationTemplateId] = useState("");
+  const [emailPaymentTemplateId, setEmailPaymentTemplateId] = useState("");
   const [emailPaymentLink, setEmailPaymentLink] = useState("");
   const [emailTemplates, setEmailTemplates] = useState([]);
   const [emailSaving, setEmailSaving] = useState(false);
@@ -69,6 +71,8 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
     setLeadLayout(campaign.lead_layout || "roofing");
     setEmailEnabled(Boolean(campaign.email_enabled));
     setEmailDefaultTemplateId(campaign.email_default_template_id || "");
+    setEmailInformationTemplateId(campaign.email_information_template_id || "");
+    setEmailPaymentTemplateId(campaign.email_payment_template_id || "");
     setEmailPaymentLink(campaign.email_payment_link || "");
   }, [campaign]);
 
@@ -85,6 +89,8 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
       await campaignService.update(campaign.id, {
         email_enabled: emailEnabled,
         email_default_template_id: emailDefaultTemplateId || null,
+        email_information_template_id: emailInformationTemplateId || null,
+        email_payment_template_id: emailPaymentTemplateId || null,
         email_payment_link: emailPaymentLink.trim() || null,
       });
       notify(`Email settings saved for "${campaign.name}".`, "success", { title: "Campaign Updated" });
@@ -433,6 +439,32 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
           {emailEnabled && (
             <>
               <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Vacation Information Template</label>
+                <select value={emailInformationTemplateId} onChange={(e) => setEmailInformationTemplateId(e.target.value)} className="input-field">
+                  <option value="">Use the default below</option>
+                  {emailTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}{t.is_active ? "" : " (inactive)"}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+                  Loads when the agent picks <span className="font-medium">Vacation Information</span> — package details, no payment link.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Payment Information Template</label>
+                <select value={emailPaymentTemplateId} onChange={(e) => setEmailPaymentTemplateId(e.target.value)} className="input-field">
+                  <option value="">Use the default below</option>
+                  {emailTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}{t.is_active ? "" : " (inactive)"}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+                  Loads when the agent picks <span className="font-medium">Payment Information</span> — must include the {"{{payment_link}}"} button.
+                </p>
+              </div>
+
+              <div>
                 <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Default Email Template</label>
                 <select value={emailDefaultTemplateId} onChange={(e) => setEmailDefaultTemplateId(e.target.value)} className="input-field">
                   <option value="">No default — agent picks a template</option>
@@ -441,7 +473,7 @@ export default function CampaignSettingsPanel({ campaign, onClose, onSaved }) {
                   ))}
                 </select>
                 <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
-                  Loads automatically when the agent clicks Email. They can switch to any other active template assigned to this campaign.
+                  Fallback when a purpose above has no template set. The agent can always switch to any other active template.
                 </p>
               </div>
 

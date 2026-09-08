@@ -20,6 +20,8 @@ const STATUS_META = {
   complained: ["Spam complaint", "#DC2626"],
 };
 
+const EMAIL_TYPE_LABEL = { information: "Vacation Info", payment: "Payment" };
+
 function today() { return new Date().toISOString().slice(0, 10); }
 function daysAgo(n) { return new Date(Date.now() - n * 864e5).toISOString().slice(0, 10); }
 function when(iso) { return iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"; }
@@ -36,8 +38,8 @@ export default function ReportsEmail() {
   const { notify } = useToast();
   const [tab, setTab] = useState("analytics");
   const [range, setRange] = useState({ preset: "30d", from: daysAgo(29), to: today() });
-  const [options, setOptions] = useState({ campaigns: [], agents: [], templates: [], statuses: [] });
-  const [filters, setFilters] = useState({ campaign_id: "", agent_id: "", template_id: "", status: "", search: "" });
+  const [options, setOptions] = useState({ campaigns: [], agents: [], templates: [], statuses: [], email_types: [] });
+  const [filters, setFilters] = useState({ campaign_id: "", agent_id: "", template_id: "", email_type: "", status: "", search: "" });
 
   useEffect(() => {
     emailService.filterOptions().then((r) => setOptions(r?.data || {})).catch(() => {});
@@ -48,6 +50,7 @@ export default function ReportsEmail() {
     ...(filters.campaign_id ? { campaign_id: filters.campaign_id } : {}),
     ...(filters.agent_id ? { agent_id: filters.agent_id } : {}),
     ...(filters.template_id ? { template_id: filters.template_id } : {}),
+    ...(filters.email_type ? { email_type: filters.email_type } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.search ? { search: filters.search } : {}),
   }), [range, filters]);
@@ -92,6 +95,7 @@ export default function ReportsEmail() {
           <Select label="Campaign" value={filters.campaign_id} onChange={(v) => setFilters((f) => ({ ...f, campaign_id: v }))} options={options.campaigns?.map((c) => ({ value: c.id, label: c.name })) || []} />
           <Select label="Agent" value={filters.agent_id} onChange={(v) => setFilters((f) => ({ ...f, agent_id: v }))} options={options.agents?.map((a) => ({ value: a.id, label: personName(a) })) || []} />
           <Select label="Template" value={filters.template_id} onChange={(v) => setFilters((f) => ({ ...f, template_id: v }))} options={options.templates?.map((t) => ({ value: t.id, label: t.name })) || []} />
+          <Select label="Email type" value={filters.email_type} onChange={(v) => setFilters((f) => ({ ...f, email_type: v }))} options={options.email_types?.map((t) => ({ value: t.value, label: t.label })) || []} />
           {tab === "activity" && (
             <Select label="Status" value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v }))} options={(options.statuses || []).map((s) => ({ value: s, label: s }))} />
           )}
@@ -153,6 +157,18 @@ function AnalyticsTab({ params, notify }) {
       {data.capped && (
         <p className="text-xs text-[var(--color-warning)]">Showing the first 50,000 emails in this window — narrow the date range for exact totals.</p>
       )}
+
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">By Email Type</h3>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+          <Stat label="Information sent" value={t.information_sent} />
+          <Stat label="Information opened" value={t.information_opened} />
+          <Stat label="Information clicked" value={t.information_clicked} />
+          <Stat label="Payment emails sent" value={t.payment_sent} />
+          <Stat label="Payment emails opened" value={t.payment_opened} />
+          <Stat label="Payment links clicked" value={t.payment_link_clicked} sub={`${t.payment_link_click_rate}% of delivered`} />
+        </div>
+      </div>
 
       <BreakdownTable title="By Campaign" rows={data.by_campaign} nameKey="campaign_name" />
       <BreakdownTable title="By Agent" rows={data.by_agent} nameKey="agent_name" />
@@ -378,6 +394,7 @@ function ActivityTab({ params, filters, setFilters, notify }) {
                 <tr>
                   <th className="px-3 py-2">Recipient</th>
                   <th className="px-3 py-2">Subject</th>
+                  <th className="px-3 py-2">Type</th>
                   <th className="px-3 py-2">Campaign</th>
                   <th className="px-3 py-2">Agent</th>
                   <th className="px-3 py-2">Template</th>
@@ -393,6 +410,11 @@ function ActivityTab({ params, filters, setFilters, notify }) {
                     <tr key={m.id} className="border-t border-[var(--color-border)]">
                       <td className="px-3 py-2 text-[var(--color-text-secondary)]">{m.recipient_email}</td>
                       <td className="max-w-[220px] truncate px-3 py-2 text-[var(--color-text-primary)]">{m.subject}</td>
+                      <td className="px-3 py-2">{EMAIL_TYPE_LABEL[m.email_type] ? (
+                        <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ backgroundColor: "var(--color-bg)", color: "var(--color-text-secondary)" }}>
+                          {EMAIL_TYPE_LABEL[m.email_type]}
+                        </span>
+                      ) : <span className="text-[var(--color-text-tertiary)]">—</span>}</td>
                       <td className="px-3 py-2 text-[var(--color-text-tertiary)]">{m.campaign?.name || "—"}</td>
                       <td className="px-3 py-2 text-[var(--color-text-tertiary)]">{personName(m.agent)}</td>
                       <td className="px-3 py-2 text-[var(--color-text-tertiary)]">{m.template?.name || "—"}</td>
@@ -405,7 +427,12 @@ function ActivityTab({ params, filters, setFilters, notify }) {
                         )}
                       </td>
                       <td className="px-3 py-2 text-[var(--color-text-tertiary)]">{when(m.sent_at || m.created_at)}</td>
-                      <td className="px-3 py-2 text-right text-[var(--color-text-tertiary)]">{m.open_count || 0} / {m.click_count || 0}</td>
+                      <td className="px-3 py-2 text-right text-[var(--color-text-tertiary)]">
+                        {m.open_count || 0} / {m.click_count || 0}
+                        {(m.payment_link_click_count || 0) > 0 && (
+                          <span className="ml-1 text-[10px] font-medium text-[var(--color-success)]">· pay ✓</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
