@@ -25,6 +25,7 @@ import smsService from "../services/smsService";
 import SmsConversation from "../components/SmsConversation";
 import EmailComposer from "../components/EmailComposer";
 import CommunicationPanel from "../components/CommunicationPanel";
+import CustomerInfoFields from "../components/CustomerInfoFields";
 import hotkeyService from "../services/hotkeyService";
 import scriptService from "../services/scriptService";
 import agentService from "../services/agentService";
@@ -184,7 +185,7 @@ function dialerWaitingMessage(dialerState) {
 
 export default function AgentDashboard() {
   const { user, activeCampaignId, sessionId, logout } = useAuth();
-  const { customFields, phoneNumbers, selectBestDID, markDIDInUse } = useAppData();
+  const { phoneNumbers, selectBestDID, markDIDInUse } = useAppData();
 
   // Clients are read from the API rather than a shared context: the booking
   // panel needs the client's calendar link, and the campaign points at its
@@ -298,6 +299,20 @@ export default function AgentDashboard() {
     return () => {
       cancelled = true;
     };
+  }, [campaign?.id]);
+
+  // The admin-configured Customer Information field layout for this
+  // campaign (labels + order + which lead fields to show). Loaded once
+  // per campaign, exactly like the script above — not tied to a call.
+  const [leadFieldConfig, setLeadFieldConfig] = useState([]);
+  useEffect(() => {
+    if (!campaign?.id) { setLeadFieldConfig([]); return; }
+    let cancelled = false;
+    agentService
+      .leadFields(campaign.id)
+      .then((res) => { if (!cancelled) setLeadFieldConfig(res?.data?.fields || []); })
+      .catch(() => { if (!cancelled) setLeadFieldConfig([]); });
+    return () => { cancelled = true; };
   }, [campaign?.id]);
 
   const [status, setStatus] = useState("available");
@@ -456,7 +471,10 @@ export default function AgentDashboard() {
       agentService
         .getSessionSummary(sessionId)
         .then((res) => {
-          if (!cancelled) setSessionSummary(res.data);
+          // Stamp the fetch time so the display can tick the current
+          // session forward smoothly between 15s polls, then re-sync to
+          // the backend total (which is the source of truth) on the next.
+          if (!cancelled) setSessionSummary({ ...res.data, _fetchedAtMs: Date.now() });
         })
         .catch(() => {});
     load();
@@ -1068,7 +1086,13 @@ export default function AgentDashboard() {
         onClose={closePanel}
         stats={{ ...statsToday, conversionRate, avgDuration }}
         sessionInfo={{
-          secondsLoggedIn: sessionSummary?.total_duration_seconds ?? Math.floor((nowTick - loginTimeRef.current) / 1000),
+          // Cumulative across every login session today (backend, business
+          // timezone), plus a live tick for the seconds since the last poll.
+          secondsLoggedIn:
+            sessionSummary?.logged_in_today_seconds != null
+              ? sessionSummary.logged_in_today_seconds +
+                Math.max(0, Math.floor((nowTick - (sessionSummary._fetchedAtMs ?? nowTick)) / 1000))
+              : Math.floor((nowTick - loginTimeRef.current) / 1000),
           campaignName: campaign?.name ?? "—",
           autoLogoutCount,
         }}
@@ -1132,7 +1156,7 @@ export default function AgentDashboard() {
                 lead={lead}
                 onUpdateField={updateLeadField}
                 onUpdateCustom={updateCustomValue}
-                customFields={customFields}
+                leadFieldConfig={leadFieldConfig}
                 callSeconds={callSeconds}
                 muted={softphone.muted}
                 onHold={softphone.held}
@@ -1145,7 +1169,6 @@ export default function AgentDashboard() {
                 hotkeys={hotkeys}
                 dtmfInput={dtmfInput}
                 onDtmfInputChange={handleDtmfInputChange}
-                leadLayout={campaign?.lead_layout}
               />
             )}
 
@@ -1619,7 +1642,7 @@ function ConnectedState({
   lead,
   onUpdateField,
   onUpdateCustom,
-  customFields,
+  leadFieldConfig,
   callSeconds,
   muted,
   onHold,
@@ -1632,9 +1655,7 @@ function ConnectedState({
   hotkeys,
   dtmfInput,
   onDtmfInputChange,
-  leadLayout,
 }) {
-  const isVacation = leadLayout === "vacation";
   const ringColor = getStatusVisual("on_call", callSeconds).color;
 
   return (
@@ -1652,63 +1673,24 @@ function ConnectedState({
         {outboundNumber && <p className="text-xs text-[var(--color-text-tertiary)]">Calling from {outboundNumber}</p>}
       </div>
 
+      {/* Admin-configured Customer Information — fields, labels and order
+          all come from GET /agent/lead-fields for this campaign. */}
+      <CustomerInfoFields
+        fields={leadFieldConfig}
+        lead={lead}
+        onUpdateField={onUpdateField}
+        onUpdateCustom={onUpdateCustom}
+        onViewProperty={onViewProperty}
+      />
+
       <div className="card">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Contact Details</h3>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <LeadField label="Full Name" value={lead.fullName} onChange={(v) => onUpdateField("fullName", v)} />
-          <LeadField label="Phone Number" value={lead.phone} onChange={(v) => onUpdateField("phone", v)} />
-          {isVacation && (
-            <LeadField label="Age" value={lead.age ?? ""} onChange={(v) => onUpdateField("age", v)} />
-          )}
-          <LeadField label="Email Address" value={lead.email} onChange={(v) => onUpdateField("email", v)} className={isVacation ? "" : "sm:col-span-2"} />
-        </div>
-
-        {isVacation && (
-          <>
-            <h3 className="mb-3 mt-5 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Travel History</h3>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <LeadField label="Last Traveled" value={lead.lastTravelDate} placeholder="e.g. June 2025" onChange={(v) => onUpdateField("lastTravelDate", v)} />
-              <LeadField label="Last Destination" value={lead.lastTravelDestination} placeholder="e.g. Cancun, Mexico" onChange={(v) => onUpdateField("lastTravelDestination", v)} />
-            </div>
-          </>
-        )}
-
-        <div className="mb-3 mt-5 flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Address Details</h3>
-          <button onClick={onViewProperty} className="btn-outline py-1 px-2.5 text-xs">
-            <MapPin size={12} /> View Property
-          </button>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <LeadField label="Street Address" value={lead.street} placeholder="123 Main Street" onChange={(v) => onUpdateField("street", v)} className="sm:col-span-2" />
-          <LeadField label="City" value={lead.city} onChange={(v) => onUpdateField("city", v)} />
-          <LeadField label="State" value={lead.state} onChange={(v) => onUpdateField("state", v)} />
-          <LeadField label="Zip Code" value={lead.zip} onChange={(v) => onUpdateField("zip", v)} />
-        </div>
-
-        {customFields.length > 0 && (
-          <>
-            <h3 className="mb-3 mt-5 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Custom Fields</h3>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {customFields.map((f) => (
-                <LeadField
-                  key={f.id}
-                  label={f.label}
-                  value={lead.customValues?.[f.id] ?? ""}
-                  onChange={(v) => onUpdateCustom(f.id, v)}
-                />
-              ))}
-            </div>
-          </>
-        )}
-
-        <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Previous History</h3>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Previous History</h3>
         <div className="flex flex-wrap items-center gap-2">
           <span className="pill bg-[var(--color-bg)] text-[var(--color-text-secondary)]">Called {lead.timesCalled}x</span>
           <span className="pill border border-[var(--color-info)]/25 bg-[var(--color-info-tint)] text-[var(--color-info)]">{lead.lastDisposition}</span>
         </div>
         <div className="mt-2 max-h-24 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-          <p className="text-sm text-[var(--color-text-secondary)]">{lead.notes}</p>
+          <p className="text-sm text-[var(--color-text-secondary)]">{lead.notes || "No notes on file."}</p>
         </div>
       </div>
 
@@ -1748,15 +1730,6 @@ function ConnectedState({
       <div className="card">
         <HotkeyBar hotkeys={hotkeys} active={false} flashingId={null} onPress={() => {}} />
       </div>
-    </div>
-  );
-}
-
-function LeadField({ label, value, onChange, placeholder, className = "" }) {
-  return (
-    <div className={className}>
-      <label className="mb-1 block text-xs font-medium text-[var(--color-text-secondary)]">{label}</label>
-      <input value={value ?? ""} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className="input-field" />
     </div>
   );
 }

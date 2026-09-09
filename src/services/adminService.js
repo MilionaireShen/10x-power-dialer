@@ -75,11 +75,16 @@ const adminService = {
   updateDisposition: (id, payload) => api.patch(`/admin/dispositions/${id}`, payload).then((r) => r.data),
   deleteDisposition: (id) => api.delete(`/admin/dispositions/${id}`).then((r) => r.data),
 
-  // ---- Custom lead fields ----
-  listCustomFields: () => api.get("/admin/custom-fields").then((r) => r.data),
+  // ---- Customer Information / lead display fields ----
+  // scope: undefined -> company default layout; a campaign id -> that
+  // campaign's own layout (empty until cloned).
+  listCustomFields: (scope) =>
+    api.get("/admin/custom-fields", { params: scope ? { campaign_id: scope } : {} }).then((r) => r.data),
   createCustomField: (payload) => api.post("/admin/custom-fields", payload).then((r) => r.data),
   updateCustomField: (id, payload) => api.patch(`/admin/custom-fields/${id}`, payload).then((r) => r.data),
   deleteCustomField: (id) => api.delete(`/admin/custom-fields/${id}`).then((r) => r.data),
+  cloneFieldsToCampaign: (campaignId) =>
+    api.post("/admin/custom-fields/clone-to-campaign", { campaign_id: campaignId }).then((r) => r.data),
 
   // ---- Activity, logins, sessions ----
   activity: (params) => api.get("/admin/activity", { params }).then((r) => r.data),

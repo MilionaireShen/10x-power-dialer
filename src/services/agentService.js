@@ -12,6 +12,10 @@ const agentService = {
   // progressive-campaign call arrives with the lead already on screen.
   currentCall: () => api.get("/agent/current-call").then((r) => r.data),
   getSipToken: () => api.get("/agent/sip-token").then((r) => r.data),
+  // The admin-configured Customer Information field layout for a campaign:
+  // which lead fields the agent screen shows, their labels and their order.
+  leadFields: (campaignId) =>
+    api.get("/agent/lead-fields", { params: campaignId ? { campaign_id: campaignId } : {} }).then((r) => r.data),
   createSipCredential: (userId) => api.post(`/admin/agents/${userId}/sip-credential`).then((r) => r.data),
   removeSipCredential: (userId) => api.delete(`/admin/agents/${userId}/sip-credential`).then((r) => r.data),
   getActiveSessions: () => api.get("/agent/sessions/active").then((r) => r.data),
