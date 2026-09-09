@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, MessageSquareText, Mail, Check, MapPin, CalendarDays, AlertTriangle, RefreshCw } from "lucide-react";
+import { Mic, MicOff, Pause, Play, PhoneOff, Phone, PhoneCall, ChevronDown, Check, MapPin, CalendarDays, AlertTriangle, RefreshCw } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useAppData } from "../lib/AppDataContext";
 import { useAgentLiveState } from "../lib/useAgentLiveState";
@@ -24,6 +24,7 @@ import campaignService from "../services/campaignService";
 import smsService from "../services/smsService";
 import SmsConversation from "../components/SmsConversation";
 import EmailComposer from "../components/EmailComposer";
+import CommunicationPanel from "../components/CommunicationPanel";
 import hotkeyService from "../services/hotkeyService";
 import scriptService from "../services/scriptService";
 import agentService from "../services/agentService";
@@ -408,6 +409,19 @@ export default function AgentDashboard() {
   useEffect(() => {
     refreshStats();
   }, [refreshStats]);
+
+  // When the loaded lead changes (preview Next, a new progressive call, a
+  // fresh manual dial, or the lead being cleared after wrap-up) drop any
+  // open communication drawer and its "sent" flag. The composers are also
+  // keyed by lead.id so they remount clean — together this guarantees the
+  // previous lead's recipient/draft can never carry into the next lead.
+  const leadId = lead?.id || null;
+  useEffect(() => {
+    setSmsOpen(false);
+    setEmailOpen(false);
+    setSmsSent(false);
+    setSmsNote("");
+  }, [leadId]);
 
   // Company-wide leaderboard, scoped to today and (when known) this
   // campaign — unlike the other report endpoints this one intentionally
@@ -1099,10 +1113,6 @@ export default function AgentDashboard() {
                 previewDialing={previewDialing}
                 onPreviewDial={handlePreviewDial}
                 onPreviewNext={handlePreviewNext}
-                smsEnabled={Boolean(campaign?.sms_enabled)}
-                emailEnabled={Boolean(campaign?.email_enabled)}
-                onOpenSms={() => setSmsOpen(true)}
-                onOpenEmail={() => setEmailOpen(true)}
               />
             )}
 
@@ -1129,10 +1139,6 @@ export default function AgentDashboard() {
                 onToggleMute={softphone.toggleMute}
                 onToggleHold={softphone.toggleHold}
                 onEndCall={handleEndCall}
-                smsEnabled={Boolean(campaign?.sms_enabled)}
-                onOpenSms={() => setSmsOpen(true)}
-                emailEnabled={Boolean(campaign?.email_enabled)}
-                onOpenEmail={() => setEmailOpen(true)}
                 onViewProperty={handleViewProperty}
                 onOpenAvailability={() => setAvailabilityOpen(true)}
                 outboundNumber={phoneNumbers.find((d) => d.id === activeDIDId)?.number}
@@ -1167,6 +1173,17 @@ export default function AgentDashboard() {
                 onHotkeyPress={handleHotkeyPress}
               />
             )}
+
+            {/* Always available once a lead is loaded and the campaign has
+                a channel enabled — independent of call state. Renders null
+                otherwise. */}
+            <CommunicationPanel
+              campaign={campaign}
+              lead={lead}
+              activeCallId={activeCallId}
+              onOpenSms={() => setSmsOpen(true)}
+              onOpenEmail={() => setEmailOpen(true)}
+            />
           </div>
         </div>
 
@@ -1182,6 +1199,7 @@ export default function AgentDashboard() {
         subtitle={activeCallId ? "Call continues while you send this" : "No call needed — send this now"}
       >
         <SmsForm
+          key={leadId || "no-lead"}
           campaign={campaign}
           lead={lead}
           callId={activeCallId}
@@ -1196,6 +1214,7 @@ export default function AgentDashboard() {
         subtitle={activeCallId ? "Call continues while you send this" : "No call needed — send this now"}
       >
         <EmailComposer
+          key={leadId || "no-lead"}
           campaign={campaign}
           lead={lead}
           callId={activeCallId}
@@ -1238,10 +1257,6 @@ function WaitingState({
   previewDialing,
   onPreviewDial,
   onPreviewNext,
-  smsEnabled,
-  emailEnabled,
-  onOpenSms,
-  onOpenEmail,
 }) {
   if (status === "manual_dial") {
     return (
@@ -1276,10 +1291,6 @@ function WaitingState({
           onNext={onPreviewNext}
           registered={registered}
           leadLayout={leadLayout}
-          smsEnabled={smsEnabled}
-          emailEnabled={emailEnabled}
-          onOpenSms={onOpenSms}
-          onOpenEmail={onOpenEmail}
         />
         <div className="card flex flex-col items-center gap-3 py-6">
           <StatusSelector
@@ -1353,7 +1364,7 @@ function WaitingState({
 // decides to call it. `lead` is only ever the one currently reserved to
 // this agent (see getNextPreviewLead in dialingEngine.js) — never a list,
 // never preloaded ahead, matching spec's "one lead at a time" requirement.
-function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered, leadLayout, smsEnabled, emailEnabled, onOpenSms, onOpenEmail }) {
+function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered, leadLayout }) {
   const busy = loading || dialing;
 
   if (!lead) {
@@ -1434,30 +1445,6 @@ function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, re
         <button onClick={onNext} disabled={busy} className="btn-outline flex items-center justify-center gap-2 py-3 text-base">
           Next <ChevronDown size={16} className="-rotate-90" />
         </button>
-
-        {/* Pre-call communication — the agent can text or email this lead
-            before deciding to dial, and it never places a call or counts as
-            an attempt (spec parts 1, 2, 15). Only shown for channels the
-            campaign has enabled. */}
-        {lead?.id && (smsEnabled || emailEnabled) && (
-          <div className="mt-1 border-t border-[var(--color-border)] pt-3">
-            <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
-              Or reach out first — no call needed
-            </p>
-            <div className={`grid gap-2 ${smsEnabled && emailEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
-              {smsEnabled && (
-                <button onClick={onOpenSms} className="btn-outline flex items-center justify-center gap-2 py-2.5">
-                  <MessageSquareText size={15} /> Text
-                </button>
-              )}
-              {emailEnabled && (
-                <button onClick={onOpenEmail} className="btn-outline flex items-center justify-center gap-2 py-2.5">
-                  <Mail size={15} /> Email
-                </button>
-              )}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1639,10 +1626,6 @@ function ConnectedState({
   onToggleMute,
   onToggleHold,
   onEndCall,
-  smsEnabled,
-  onOpenSms,
-  emailEnabled,
-  onOpenEmail,
   onViewProperty,
   onOpenAvailability,
   outboundNumber,
@@ -1753,20 +1736,9 @@ function ConnectedState({
           />
         </div>
         <div className="mt-2.5 space-y-2">
-          {(smsEnabled || emailEnabled) && (
-            <div className={`grid gap-2 ${smsEnabled && emailEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
-              {smsEnabled && (
-                <button onClick={onOpenSms} className="btn-outline w-full">
-                  <MessageSquareText size={15} /> Text
-                </button>
-              )}
-              {emailEnabled && (
-                <button onClick={onOpenEmail} className="btn-outline w-full">
-                  <Mail size={15} /> Email
-                </button>
-              )}
-            </div>
-          )}
+          {/* SMS / Email now live in the always-on CommunicationPanel below,
+              which is available from the moment the lead loads — not tied to
+              this connected-call view. */}
           <button onClick={onOpenAvailability} className="btn-outline w-full">
             <CalendarDays size={15} /> Availability
           </button>
