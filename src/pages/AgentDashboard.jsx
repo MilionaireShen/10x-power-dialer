@@ -1154,9 +1154,6 @@ export default function AgentDashboard() {
             {callState === "connected" && (
               <ConnectedState
                 lead={lead}
-                onUpdateField={updateLeadField}
-                onUpdateCustom={updateCustomValue}
-                leadFieldConfig={leadFieldConfig}
                 callSeconds={callSeconds}
                 muted={softphone.muted}
                 onHold={softphone.held}
@@ -1197,9 +1194,18 @@ export default function AgentDashboard() {
               />
             )}
 
-            {/* Always available once a lead is loaded and the campaign has
-                a channel enabled — independent of call state. Renders null
-                otherwise. */}
+            {/* Customer Information + Communication — both appear as soon
+                as a lead is loaded, independent of call state, and both
+                re-bind to the new lead on Next. Render null when there is
+                no lead. */}
+            <CustomerInfoFields
+              fields={leadFieldConfig}
+              lead={lead}
+              onUpdateField={updateLeadField}
+              onUpdateCustom={updateCustomValue}
+              onViewProperty={handleViewProperty}
+            />
+
             <CommunicationPanel
               campaign={campaign}
               lead={lead}
@@ -1640,16 +1646,12 @@ function ManualDialCard({ value, onChange, onDial, dialing, registered }) {
 
 function ConnectedState({
   lead,
-  onUpdateField,
-  onUpdateCustom,
-  leadFieldConfig,
   callSeconds,
   muted,
   onHold,
   onToggleMute,
   onToggleHold,
   onEndCall,
-  onViewProperty,
   onOpenAvailability,
   outboundNumber,
   hotkeys,
@@ -1673,15 +1675,8 @@ function ConnectedState({
         {outboundNumber && <p className="text-xs text-[var(--color-text-tertiary)]">Calling from {outboundNumber}</p>}
       </div>
 
-      {/* Admin-configured Customer Information — fields, labels and order
-          all come from GET /agent/lead-fields for this campaign. */}
-      <CustomerInfoFields
-        fields={leadFieldConfig}
-        lead={lead}
-        onUpdateField={onUpdateField}
-        onUpdateCustom={onUpdateCustom}
-        onViewProperty={onViewProperty}
-      />
+      {/* Customer Information renders once at the workspace level (it is
+          available from the moment the lead loads, not just on a call). */}
 
       <div className="card">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">Previous History</h3>

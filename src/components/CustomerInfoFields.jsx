@@ -35,6 +35,10 @@ const EMPTY_LABEL = "Not provided";
 export default function CustomerInfoFields({ fields, lead, onUpdateField, onUpdateCustom, onViewProperty, readOnly = false }) {
   const list = Array.isArray(fields) ? fields : [];
 
+  // Nothing to show until a real lead is loaded — keeps the section out of
+  // the "waiting for a lead" screen.
+  if (!lead?.id) return null;
+
   const readValue = (fieldName) => {
     const key = LEAD_KEYS[fieldName];
     const raw = key ? lead?.[key] : lead?.customValues?.[fieldName];
