@@ -35,6 +35,25 @@ import leadService from "../services/leadService";
 import reportService from "../services/reportService";
 import { playDtmfTone, addedDtmfDigits } from "../lib/dtmf";
 
+// Customer Information panel edits: the flat field key the panel writes ->
+// the real `leads` column. `fullName` (split to first/last) and `notes`
+// (into custom_fields) are handled separately in updateLeadField; anything
+// not here is a custom field and goes into custom_fields by its own name.
+const LEAD_FIELD_COLUMN = {
+  firstName: "first_name",
+  lastName: "last_name",
+  phone: "phone_number",
+  email: "email",
+  street: "street_address",
+  city: "city",
+  state: "state",
+  zip: "zip_code",
+  age: "age",
+  timezone: "timezone",
+  lastTravelDate: "last_travel_date",
+  lastTravelDestination: "last_travel_destination",
+};
+
 // The dispositions table is seeded with slugs that don't exactly match this
 // frontend's DISPOSITIONS[].key values (e.g. "booked_appointment" vs
 // "booked") — this reconciles a hotkey's joined disposition name to the
@@ -1065,9 +1084,67 @@ export default function AgentDashboard() {
     }
   };
 
-  const updateLeadField = (key, value) => setLead((l) => ({ ...l, [key]: value }));
-  const updateCustomValue = (fieldId, value) =>
+  // --- Customer Information autosave (PATCH /leads/:id, debounced) --------
+  const pendingLeadSaveRef = useRef({ leadId: null, patch: {} });
+  const leadSaveTimerRef = useRef(null);
+
+  const flushLeadSave = useCallback(() => {
+    if (leadSaveTimerRef.current) {
+      clearTimeout(leadSaveTimerRef.current);
+      leadSaveTimerRef.current = null;
+    }
+    const { leadId: pendingId, patch } = pendingLeadSaveRef.current;
+    pendingLeadSaveRef.current = { leadId: null, patch: {} };
+    if (!pendingId || Object.keys(patch).length === 0) return;
+    leadService.update(pendingId, patch).catch((err) => {
+      notify(
+        err?.response?.data?.message || "Could not save that change to the customer's details.",
+        "error",
+      );
+    });
+  }, [notify]);
+
+  const queueLeadSave = useCallback((targetLeadId, columnPatch) => {
+    if (!targetLeadId) return;
+    const cur = pendingLeadSaveRef.current;
+    // The lead in the box changed while an edit was still pending — send the
+    // previous lead's edits before starting to collect this one's.
+    if (cur.leadId && cur.leadId !== targetLeadId) flushLeadSave();
+    const merged = { ...pendingLeadSaveRef.current.patch };
+    for (const [k, v] of Object.entries(columnPatch)) {
+      if (k === "custom_fields") merged.custom_fields = { ...(merged.custom_fields || {}), ...v };
+      else merged[k] = v;
+    }
+    pendingLeadSaveRef.current = { leadId: targetLeadId, patch: merged };
+    if (leadSaveTimerRef.current) clearTimeout(leadSaveTimerRef.current);
+    leadSaveTimerRef.current = setTimeout(flushLeadSave, 900);
+  }, [flushLeadSave]);
+
+  // Flush pending edits whenever the loaded lead changes (Next / new call /
+  // wrap-up clear) and on unmount, so nothing typed is lost.
+  useEffect(() => flushLeadSave, [leadId, flushLeadSave]);
+
+  // Customer Information edits are persisted to the lead (PATCH /leads/:id),
+  // debounced so typing doesn't fire a request per keystroke. The flat
+  // field key the panel uses maps back to the real lead column here; a
+  // couple of fields (full name, notes) need reshaping first.
+  const updateLeadField = (key, value) => {
+    setLead((l) => ({ ...l, [key]: value }));
+    const id = lead?.id;
+    if (!id) return;
+    if (key === "fullName") {
+      const parts = value.trim().split(/\s+/).filter(Boolean);
+      queueLeadSave(id, { first_name: parts[0] || null, last_name: parts.slice(1).join(" ") || null });
+    } else if (key === "notes") {
+      queueLeadSave(id, { custom_fields: { notes: value } });
+    } else if (LEAD_FIELD_COLUMN[key]) {
+      queueLeadSave(id, { [LEAD_FIELD_COLUMN[key]]: value });
+    }
+  };
+  const updateCustomValue = (fieldId, value) => {
     setLead((l) => ({ ...l, customValues: { ...l.customValues, [fieldId]: value } }));
+    if (lead?.id) queueLeadSave(lead.id, { custom_fields: { [fieldId]: value } });
+  };
 
   const handleViewProperty = () => openPropertyOnMap(lead, notify);
 

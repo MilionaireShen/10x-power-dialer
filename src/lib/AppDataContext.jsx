@@ -106,8 +106,8 @@ export function AppDataProvider({ children }) {
   // monitorService and are recorded in monitoring_log. What is tracked here is
   // only what the floating bar needs to render: which session this browser
   // started, and when, so the elapsed timer counts correctly.
-  const startMonitoring = useCallback((admin, agentName, type, agentId) => {
-    const session = { id: nextId("mon"), admin, agentName, agentId, type, startedAt: Date.now() };
+  const startMonitoring = useCallback(({ admin, agentName, type, agentId, monitoringId = null }) => {
+    const session = { id: nextId("mon"), admin, agentName, agentId, type, monitoringId, startedAt: Date.now() };
     setMonitoringSessions((prev) => [...prev, session]);
     return session.id;
   }, []);
@@ -115,8 +115,10 @@ export function AppDataProvider({ children }) {
   // Switches an in-progress session between listen/whisper/barge without
   // resetting startedAt — the elapsed timer keeps counting across a mode
   // switch, matching one real session.
-  const switchMonitoringMode = useCallback((id, type) => {
-    setMonitoringSessions((prev) => prev.map((s) => (s.id === id ? { ...s, type } : s)));
+  const switchMonitoringMode = useCallback((id, type, monitoringId) => {
+    setMonitoringSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, type, monitoringId: monitoringId ?? s.monitoringId } : s)),
+    );
   }, []);
 
   const stopMonitoring = useCallback((id) => {

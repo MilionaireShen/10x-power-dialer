@@ -14,6 +14,10 @@ const leadService = {
   // { data: { lead: null, normalized } } cleanly when there is no match.
   lookupByPhone: (phone) =>
     api.get("/admin/leads/lookup", { params: { phone } }).then((r) => r.data),
+  // Customer Information panel autosave. `patch` is keyed by real lead
+  // column names; `custom_fields` (if present) is merged server-side, not
+  // replaced. An agent may only patch a lead they are currently working.
+  update: (id, patch) => api.patch(`/leads/${id}`, patch).then((r) => r.data),
 };
 
 export default leadService;

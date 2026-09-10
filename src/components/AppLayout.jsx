@@ -14,6 +14,7 @@ import { useCallRecording } from "../lib/useCallRecording";
 import IncomingCallPanel from "./IncomingCallPanel";
 import ErrorBoundary from "./ErrorBoundary";
 import monitorService from "../services/monitorService";
+import { getMonitorNumber } from "../lib/monitorNumber";
 
 // Auth + role enforcement happens per-route via RequireRole. This shell just
 // provides the persistent chrome — agent/admin/manager/super_admin each get
@@ -123,12 +124,15 @@ function AdminShell() {
             session={session}
             index={i}
             onStop={() => {
-              monitorService.stop(session.agentId).catch(() => {});
+              monitorService.stop({ monitoringId: session.monitoringId, agentId: session.agentId }).catch(() => {});
               stopMonitoring(session.id);
             }}
             onSwitchMode={(type) => {
-              MONITOR_MODE_ACTION[type]?.(session.agentId).catch(() => {});
-              switchMonitoringMode(session.id, type);
+              // A switch reuses the leg the supervisor is already on, so the
+              // number is only a fallback the backend rarely needs.
+              MONITOR_MODE_ACTION[type]?.(session.agentId, getMonitorNumber() || undefined)
+                .then((res) => switchMonitoringMode(session.id, type, res?.data?.monitoring_id))
+                .catch(() => {});
             }}
           />
         ))}

@@ -4,6 +4,7 @@ import { useAppData } from "./AppDataContext";
 import { useToast } from "./ToastContext";
 import monitorService from "../services/monitorService";
 import adminService from "../services/adminService";
+import { getMonitorNumber, setMonitorNumber, normalizeMonitorNumber } from "./monitorNumber";
 
 const MONITOR_ACTION = { listen: monitorService.listen, whisper: monitorService.whisper, barge: monitorService.barge };
 const MONITOR_VERB = { listen: "listening", whisper: "whispering", barge: "barge" };
@@ -28,6 +29,10 @@ const FORCE_STATUS_LABEL = {
 // Messages, forced statuses and forced logouts now go to the server. They
 // previously updated React state, which meant they reached only the tab the
 // supervisor was sitting in — the agent, on another machine, saw nothing.
+//
+// Listen/Whisper/Barge: the backend resolves the agent's current call and
+// dials `monitor_number` (the supervisor's phone) to connect them. The
+// number is asked for once and remembered on this device.
 export function useAgentActions() {
   const { startMonitoring, stopMonitoring } = useAppData();
   const { notify } = useToast();
@@ -35,18 +40,59 @@ export function useAgentActions() {
   const [statusTarget, setStatusTarget] = useState(null);
   const [queueTarget, setQueueTarget] = useState(null);
   const [queue, setQueue] = useState({ loading: false, rows: [], error: null });
+  // A monitor action waiting on the supervisor entering a callback number.
+  const [pendingMonitor, setPendingMonitor] = useState(null);
+
+  const runMonitor = async (agent, type, number) => {
+    let session;
+    try {
+      const res = await MONITOR_ACTION[type](agent.id, number);
+      session = startMonitoring({
+        admin: "You",
+        agentName: agent.name,
+        type,
+        agentId: agent.id,
+        monitoringId: res?.data?.monitoring_id ?? null,
+      });
+      notify(
+        `${type === "listen" ? "Listening to" : type === "whisper" ? "Whispering to" : "Barged into"} ${agent.name}'s call — your phone (${number}) is ringing.`,
+        "info",
+      );
+    } catch (err) {
+      if (session) stopMonitoring(session);
+      const msg = err?.response?.data?.message || err?.message || `Could not start ${MONITOR_VERB[type]} for ${agent.name}.`;
+      // A rejected or unparseable number: forget it so the next attempt asks again.
+      if (/monitor_number|valid phone number/i.test(msg)) {
+        setMonitorNumber(null);
+        setPendingMonitor({ agent, type });
+      }
+      notify(msg, "error");
+    }
+  };
 
   const handleMonitor = (agent, type) => {
     if (agent.status !== "on_call") {
       notify(`${agent.name} is not currently on a call.`, "warning");
       return;
     }
-    const sessionId = startMonitoring(user_label(agent), agent.name, type, agent.id);
-    MONITOR_ACTION[type]?.(agent.id).catch((err) => {
-      notify(err?.message || `Could not start ${MONITOR_VERB[type]} for ${agent.name}.`, "error");
-      stopMonitoring(sessionId);
-    });
-    notify(`${type === "listen" ? "Listening to" : type === "whisper" ? "Whispering to" : "Barged into"} ${agent.name}'s call.`, "info");
+    const number = getMonitorNumber();
+    if (!number) {
+      setPendingMonitor({ agent, type });
+      return;
+    }
+    runMonitor(agent, type, number);
+  };
+
+  const submitMonitorNumber = (raw) => {
+    const number = normalizeMonitorNumber(raw);
+    if (!number || number.replace(/\D/g, "").length < 10) {
+      notify("Enter a valid phone number (with area code) for us to call you back on.", "warning");
+      return;
+    }
+    setMonitorNumber(number);
+    const pending = pendingMonitor;
+    setPendingMonitor(null);
+    if (pending) runMonitor(pending.agent, pending.type, number);
   };
 
   const forceLogout = async (agent) => {
@@ -104,6 +150,20 @@ export function useAgentActions() {
 
   const panels = (
     <>
+      <SidePanel
+        open={Boolean(pendingMonitor)}
+        onClose={() => setPendingMonitor(null)}
+        title="Connect to live calls"
+        subtitle="We call your phone so you can hear the call"
+      >
+        <MonitorNumberForm
+          initial={getMonitorNumber() || ""}
+          agentName={pendingMonitor?.agent?.name}
+          mode={pendingMonitor?.type}
+          onSubmit={submitMonitorNumber}
+        />
+      </SidePanel>
+
       <SidePanel open={Boolean(messageTarget)} onClose={() => setMessageTarget(null)} title={messageTarget ? `Message ${messageTarget.name}` : ""} subtitle="Appears as a pop-up on their screen">
         <MessageForm onSend={sendMessage} />
       </SidePanel>
@@ -153,11 +213,35 @@ export function useAgentActions() {
   return { handleMonitor, handleAgentAction, panels };
 }
 
-// The monitoring bar labels the session with whoever started it; the agent row
-// carries no supervisor name, so the supervisor's own is not available here
-// and the bar uses a neutral label instead of inventing one.
-function user_label() {
-  return "You";
+function MonitorNumberForm({ initial, agentName, mode, onSubmit }) {
+  const [value, setValue] = useState(initial);
+  const verb = mode === "whisper" ? "whisper to" : mode === "barge" ? "barge into" : "listen to";
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-[var(--color-text-secondary)]">
+        To {verb} {agentName ? `${agentName}'s call` : "a live call"}, we place a call to your phone and connect you to it.
+        Enter the number to reach you on — it's saved on this device so you're only asked once.
+      </p>
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Your phone number</label>
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && onSubmit(value)}
+          placeholder="(555) 123-4567"
+          inputMode="tel"
+          className="input-field"
+        />
+      </div>
+      <button onClick={() => onSubmit(value)} className="btn-purple w-full py-3">
+        Call me &amp; connect
+      </button>
+      <p className="text-xs text-[var(--color-text-tertiary)]">
+        Standard call charges from the telephony account apply for the monitoring leg.
+      </p>
+    </div>
+  );
 }
 
 function MessageForm({ onSend }) {
