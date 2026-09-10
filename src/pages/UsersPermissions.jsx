@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ShieldCheck, Save, Info } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import EmptyState from "../components/EmptyState";
@@ -25,6 +26,7 @@ export default function UsersPermissions() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [searchParams] = useSearchParams();
 
   // The catalogue comes from the permission table's own columns, so the
   // checklist cannot offer a permission the server does not understand.
@@ -34,7 +36,11 @@ export default function UsersPermissions() {
         setSections(cat?.data?.sections || []);
         const editable = (list?.data || []).filter((u) => EDITABLE_ROLES.includes(u.role));
         setUsers(editable);
-        if (editable.length) setSelectedId(editable[0].id);
+        if (editable.length) {
+          const wanted = searchParams.get("user");
+          const match = wanted && editable.find((u) => u.id === wanted);
+          setSelectedId(match ? match.id : editable[0].id);
+        }
       })
       .catch((err) => {
         const message = err?.response?.data?.message || "Could not load the permission catalogue.";

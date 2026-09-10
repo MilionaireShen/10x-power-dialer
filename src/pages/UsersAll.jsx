@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Plus, Search } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Plus, Search, ShieldCheck, Trash2 } from "lucide-react";
 import ScreenHeader from "../components/ScreenHeader";
 import UserPanel from "../components/UserPanel";
+import DeleteUserDialog from "../components/DeleteUserDialog";
 import userService from "../services/userService";
 import campaignService from "../services/campaignService";
 import { useAuth } from "../lib/AuthContext";
@@ -10,6 +11,7 @@ import { hasPermission } from "../lib/permissions";
 
 const ROLE_LABEL = { agent: "Agent", manager: "Manager", admin: "Admin", super_admin: "Super Admin" };
 const ROLE_COLOR = { agent: "var(--color-info)", manager: "#0F766E", admin: "var(--color-accent)", super_admin: "var(--color-gold)" };
+const ROLE_RANK = { agent: 0, manager: 1, admin: 2, super_admin: 3 };
 
 export default function UsersAll() {
   const [users, setUsers] = useState([]);
@@ -19,8 +21,19 @@ export default function UsersAll() {
   const [search, setSearch] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const [deletingUser, setDeletingUser] = useState(null);
   const { user: me } = useAuth();
+  const navigate = useNavigate();
   const canCreate = hasPermission(me, "can_create_users");
+  const canManagePermissions = hasPermission(me, "can_manage_permissions");
+  const canDeleteUsers = hasPermission(me, "can_delete_users");
+
+  // Mirrors the backend rule: you can't delete yourself, and you can't delete
+  // an account at or above your own level unless you're a super admin.
+  const canDeleteTarget = (u) =>
+    canDeleteUsers &&
+    u.id !== me?.id &&
+    (me?.role === "super_admin" || (ROLE_RANK[u.role] ?? 0) < (ROLE_RANK[me?.role] ?? 0));
 
   const refresh = useCallback(async () => {
     try {
@@ -128,16 +141,30 @@ export default function UsersAll() {
                   </td>
                   <td className="px-5 py-3.5 text-[var(--color-text-tertiary)]">{u.last_login ? new Date(u.last_login).toLocaleString() : "Never"}</td>
                   <td className="px-5 py-3.5 text-[var(--color-text-secondary)]">{u.role === "admin" || u.role === "super_admin" ? "All" : campaignNames(u.campaign_ids)}</td>
-                  <td className="px-5 py-3.5">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openEdit(u);
-                      }}
-                      className="font-medium text-[var(--color-accent)] hover:underline"
-                    >
-                      Edit
-                    </button>
+                  <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => openEdit(u)} className="font-medium text-[var(--color-accent)] hover:underline">
+                        Edit
+                      </button>
+                      {u.role === "manager" && canManagePermissions && (
+                        <button
+                          onClick={() => navigate(`/admin/users/permissions?user=${u.id}`)}
+                          className="flex items-center gap-1 font-medium text-[var(--color-text-secondary)] hover:underline"
+                          title="Configure exactly what this manager can see and do"
+                        >
+                          <ShieldCheck size={13} /> Access
+                        </button>
+                      )}
+                      {canDeleteTarget(u) && (
+                        <button
+                          onClick={() => setDeletingUser(u)}
+                          className="flex items-center gap-1 font-medium text-[var(--color-danger)] hover:underline"
+                          title="Permanently delete this user"
+                        >
+                          <Trash2 size={13} /> Delete
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -154,6 +181,7 @@ export default function UsersAll() {
       </div>
 
       <UserPanel open={panelOpen} onClose={() => setPanelOpen(false)} editingUser={editingUser} campaigns={campaigns} onSaved={refresh} />
+      <DeleteUserDialog user={deletingUser} onClose={() => setDeletingUser(null)} onDeleted={refresh} />
     </div>
   );
 }
