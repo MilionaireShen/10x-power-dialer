@@ -2,8 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "redirects": [
     {
-      "source": "/:path*",
-      "destination": "https://vivacious-acceptance-production-4fbe.up.railway.app/:path*",
+      "source": "/(.*)",
+      "destination": "https://vivacious-acceptance-production-4fbe.up.railway.app/$1",
       "permanent": false
     }
   ]
