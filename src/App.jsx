@@ -74,6 +74,7 @@ import DIDManagement from "./pages/DIDManagement";
 import DIDReputationSettings from "./pages/DIDReputationSettings";
 import DIDProtection from "./pages/DIDProtection";
 import DIDHealthReport from "./pages/DIDHealthReport";
+import UpdateBanner from "./components/UpdateBanner";
 
 const ADMIN_ROLES = ["admin", "manager", "super_admin"];
 
@@ -254,6 +255,7 @@ export default function App() {
 
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            <UpdateBanner />
           </BrowserRouter>
         </ToastProvider>
       </AppDataProvider>
