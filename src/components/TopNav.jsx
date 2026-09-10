@@ -22,16 +22,22 @@ export default function TopNav() {
 
   useEffect(() => setOpenKey(null), [location.pathname]);
 
-  const visibleCategories = ADMIN_NAV.filter((cat) => {
-    if (cat.adminOnly && user.role === "manager") return false;
-    if (cat.anyPermission && user.role === "manager" && !hasAnyPermission(user, cat.anyPermission)) return false;
+  const isManager = user.role === "manager";
+  const itemAllowed = (item) => {
+    if (item.superAdminOnly) return user.role === "super_admin";
+    if (isManager && item.anyPermission && !hasAnyPermission(user, item.anyPermission)) return false;
     return true;
+  };
+  const visibleCategories = ADMIN_NAV.filter((cat) => {
+    if (cat.adminOnly && isManager) return false;
+    if (cat.anyPermission && isManager && !hasAnyPermission(user, cat.anyPermission)) return false;
+    return cat.items.some(itemAllowed);
   });
 
   return (
     <div ref={rootRef} className="flex items-center gap-1 border-b border-[var(--color-border)] bg-white px-4">
       {visibleCategories.map((cat) => {
-        const items = cat.items.filter((item) => !item.superAdminOnly || user.role === "super_admin");
+        const items = cat.items.filter(itemAllowed);
         if (items.length === 0) return null;
         const isActive = location.pathname.startsWith(`/admin/${cat.key === "callcenter" ? "call-center" : cat.key === "phonesystem" ? "phone-system" : cat.key}`);
         const Icon = cat.icon;

@@ -5,6 +5,8 @@ import ScreenHeader from "../components/ScreenHeader";
 import UserPanel from "../components/UserPanel";
 import userService from "../services/userService";
 import campaignService from "../services/campaignService";
+import { useAuth } from "../lib/AuthContext";
+import { hasPermission } from "../lib/permissions";
 
 const ROLE_LABEL = { agent: "Agent", manager: "Manager", admin: "Admin", super_admin: "Super Admin" };
 const ROLE_COLOR = { agent: "var(--color-info)", manager: "#0F766E", admin: "var(--color-accent)", super_admin: "var(--color-gold)" };
@@ -17,6 +19,8 @@ export default function UsersAll() {
   const [search, setSearch] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const { user: me } = useAuth();
+  const canCreate = hasPermission(me, "can_create_users");
 
   const refresh = useCallback(async () => {
     try {
@@ -68,9 +72,11 @@ export default function UsersAll() {
         category="Users"
         title="All Users"
         actions={
-          <button onClick={openAdd} className="btn-purple">
-            <Plus size={15} /> Add New User
-          </button>
+          canCreate ? (
+            <button onClick={openAdd} className="btn-purple">
+              <Plus size={15} /> Add New User
+            </button>
+          ) : null
         }
       />
 

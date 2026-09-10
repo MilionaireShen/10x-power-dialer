@@ -10,15 +10,21 @@ import Avatar from "./Avatar";
 export default function AdminSidebar() {
   const { user, logout } = useAuth();
 
-  const categories = ADMIN_NAV.filter((cat) => {
-    if (cat.adminOnly && user.role === "manager") return false;
-    if (cat.anyPermission && user.role === "manager" && !hasAnyPermission(user, cat.anyPermission)) return false;
-    return cat.items.some((item) => !item.superAdminOnly || user.role === "super_admin");
+  const isManager = user.role === "manager";
+  const itemAllowed = (item) => {
+    if (item.superAdminOnly) return user.role === "super_admin";
+    if (isManager && item.anyPermission && !hasAnyPermission(user, item.anyPermission)) return false;
+    return true;
+  };
+  const categories = ADMIN_NAV.map((cat) => ({ ...cat, items: cat.items.filter(itemAllowed) })).filter((cat) => {
+    if (cat.adminOnly && isManager) return false;
+    if (cat.anyPermission && isManager && !hasAnyPermission(user, cat.anyPermission)) return false;
+    return cat.items.length > 0;
   });
 
   // Knowledge Center is admin/super_admin by default, and manager-visible
-  // only once the "View Knowledge Center" permission is granted.
-  const showKnowledgeCenter = user.role !== "manager" || hasAnyPermission(user, ["view_knowledge_center"]);
+  // only once a knowledge permission is granted.
+  const showKnowledgeCenter = !isManager || hasAnyPermission(user, ["can_access_knowledge_center", "can_view_knowledge_admin"]);
 
   return (
     <aside className="sticky top-0 flex h-screen w-[64px] shrink-0 flex-col items-center border-r border-[var(--color-border)] bg-white py-4">

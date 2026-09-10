@@ -76,28 +76,30 @@ import DIDProtection from "./pages/DIDProtection";
 import DIDHealthReport from "./pages/DIDHealthReport";
 
 const ADMIN_ROLES = ["admin", "manager", "super_admin"];
-const ADMIN_ONLY_ROLES = ["admin", "super_admin"];
 
-const CALLCENTER_PERMS = ["view_agent_monitor", "listen_live", "whisper_agents", "barge_calls", "send_broadcast"];
+// All keys below are real user_permissions columns (can_* prefixed). The
+// backend managerAccess gate checks the same keys, so hiding a nav item
+// and blocking its API are driven by one list, never two that can drift.
+const CALLCENTER_PERMS = ["can_listen_calls", "can_whisper_calls", "can_barge_calls", "can_send_broadcast", "can_view_calls", "can_view_sms_conversations", "can_view_agent_sms", "can_view_campaign_sms", "can_view_call_history"];
 const REPORTS_PERMS = [
-  "view_campaign_reports",
-  "view_agent_reports",
-  "view_conversion_reports",
-  "view_duration_reports",
-  "export_csv",
-  "export_pdf",
-  "view_financial_metrics",
-  "view_leadlist_performance",
-  "listen_recordings",
-  "download_recordings",
+  "can_view_campaign_reports",
+  "can_view_agent_reports",
+  "can_view_financial_metrics",
+  "can_export_reports",
+  "can_download_recordings",
+  "can_view_call_history",
+  "can_access_call_analytics",
+  "can_view_sms_logs",
   "can_view_email_activity",
   "can_view_email_analytics",
 ];
-const CAMPAIGNS_PERMS = ["create_campaigns", "edit_campaigns", "pause_resume_campaigns", "change_dialing_mode", "assign_agents_campaigns", "upload_lead_lists", "manage_dnc", "can_enable_sms", "can_edit_sms_templates"];
-// The permissions the server actually checks on /sms/conversations, so the
-// route and the API agree on who may open the inbox.
-const SMS_PERMS = ["can_view_sms_conversations", "can_view_agent_sms", "can_view_campaign_sms"];
-const LEADS_PERMS = ["upload_lead_lists", "manage_dnc", "view_leadlist_performance"];
+const CAMPAIGNS_PERMS = ["can_view_campaigns", "can_create_campaigns", "can_edit_campaigns", "can_pause_campaigns", "can_change_dialing_mode", "can_assign_agents", "can_upload_leads", "can_manage_dnc", "can_manage_campaign_settings", "can_manage_scripts", "can_manage_dispositions", "can_enable_sms", "can_edit_sms_templates", "can_enable_email", "can_edit_email_templates"];
+const SMS_PERMS = ["can_view_sms_conversations", "can_view_agent_sms", "can_view_campaign_sms", "can_view_sms_logs", "can_send_sms"];
+const LEADS_PERMS = ["can_view_leads", "can_upload_leads", "can_edit_leads", "can_manage_dnc", "can_assign_leads", "can_export_leads"];
+const USERS_PERMS = ["can_view_users", "can_create_users", "can_edit_users", "can_deactivate_users", "can_delete_users", "can_manage_permissions"];
+const SETTINGS_PERMS = ["can_view_settings", "can_edit_settings", "can_manage_company_settings", "can_manage_communication_settings", "can_manage_dialing_settings"];
+const PHONESYS_PERMS = ["can_view_phone_system", "can_manage_phone_numbers", "can_manage_routing", "can_manage_dialing_settings"];
+const BILLING_PERMS = ["can_view_billing", "can_manage_billing"];
 
 function RoleHome() {
   const { user } = useAuth();
@@ -108,14 +110,6 @@ function RoleHome() {
 function Admin({ children, anyPermission }) {
   return (
     <RequireRole roles={ADMIN_ROLES} loginPath="/admin/login" anyPermission={anyPermission}>
-      {children}
-    </RequireRole>
-  );
-}
-
-function AdminOnly({ children }) {
-  return (
-    <RequireRole roles={ADMIN_ONLY_ROLES} loginPath="/admin/login">
       {children}
     </RequireRole>
   );
@@ -204,22 +198,22 @@ export default function App() {
                 <Route path="admin/leads/health" element={<Admin anyPermission={LEADS_PERMS}><LeadsHealth /></Admin>} />
                 <Route path="admin/leads/custom-fields" element={<Admin anyPermission={LEADS_PERMS}><LeadsCustomFields /></Admin>} />
 
-                {/* Users — admin/super_admin only */}
-                <Route path="admin/users/all" element={<AdminOnly><UsersAll /></AdminOnly>} />
-                <Route path="admin/users/permissions" element={<AdminOnly><UsersPermissions /></AdminOnly>} />
-                <Route path="admin/users/sessions" element={<AdminOnly><UsersSessions /></AdminOnly>} />
-                <Route path="admin/users/login-history" element={<AdminOnly><UsersLoginHistory /></AdminOnly>} />
+                {/* Users — admin/super_admin, or a manager granted a users permission */}
+                <Route path="admin/users/all" element={<Admin anyPermission={USERS_PERMS}><UsersAll /></Admin>} />
+                <Route path="admin/users/permissions" element={<Admin anyPermission={["can_manage_permissions"]}><UsersPermissions /></Admin>} />
+                <Route path="admin/users/sessions" element={<Admin anyPermission={["can_view_users", "can_view_agent_reports"]}><UsersSessions /></Admin>} />
+                <Route path="admin/users/login-history" element={<Admin anyPermission={["can_view_users", "can_view_agent_reports"]}><UsersLoginHistory /></Admin>} />
 
-                {/* Settings — admin/super_admin only */}
-                <Route path="admin/settings/general" element={<AdminOnly><SettingsGeneral /></AdminOnly>} />
-                <Route path="admin/settings/dialer" element={<AdminOnly><SettingsDialer /></AdminOnly>} />
-                <Route path="admin/settings/phone-numbers" element={<AdminOnly><PhoneNumbers /></AdminOnly>} />
-                <Route path="admin/settings/number-rotation" element={<AdminOnly><SettingsNumberRotation /></AdminOnly>} />
-                <Route path="admin/settings/spam-detection" element={<AdminOnly><SettingsSpamDetection /></AdminOnly>} />
-                <Route path="admin/settings/email-notifications" element={<AdminOnly><SettingsEmailNotifications /></AdminOnly>} />
-                <Route path="admin/settings/integrations" element={<AdminOnly><SettingsIntegrations /></AdminOnly>} />
-                <Route path="admin/settings/billing" element={<AdminOnly><SettingsBilling /></AdminOnly>} />
-                <Route path="admin/settings/hotkeys" element={<AdminOnly><HotkeySettings /></AdminOnly>} />
+                {/* Settings — admin/super_admin, or a manager granted a settings permission */}
+                <Route path="admin/settings/general" element={<Admin anyPermission={SETTINGS_PERMS}><SettingsGeneral /></Admin>} />
+                <Route path="admin/settings/dialer" element={<Admin anyPermission={["can_manage_dialing_settings", "can_edit_settings"]}><SettingsDialer /></Admin>} />
+                <Route path="admin/settings/phone-numbers" element={<Admin anyPermission={PHONESYS_PERMS}><PhoneNumbers /></Admin>} />
+                <Route path="admin/settings/number-rotation" element={<Admin anyPermission={["can_manage_dialing_settings"]}><SettingsNumberRotation /></Admin>} />
+                <Route path="admin/settings/spam-detection" element={<Admin anyPermission={["can_manage_dialing_settings", "can_edit_settings"]}><SettingsSpamDetection /></Admin>} />
+                <Route path="admin/settings/email-notifications" element={<Admin anyPermission={["can_manage_communication_settings", "can_manage_email_settings"]}><SettingsEmailNotifications /></Admin>} />
+                <Route path="admin/settings/integrations" element={<Admin anyPermission={["can_manage_company_settings"]}><SettingsIntegrations /></Admin>} />
+                <Route path="admin/settings/billing" element={<Admin anyPermission={BILLING_PERMS}><SettingsBilling /></Admin>} />
+                <Route path="admin/settings/hotkeys" element={<Admin anyPermission={["can_manage_campaign_settings", "can_edit_settings"]}><HotkeySettings /></Admin>} />
                 <Route
                   path="admin/settings/companies"
                   element={
@@ -229,15 +223,15 @@ export default function App() {
                   }
                 />
 
-                {/* Phone System — admin/super_admin only */}
-                <Route path="admin/phone-system/numbers" element={<AdminOnly><PhoneNumbers /></AdminOnly>} />
-                <Route path="admin/phone-system/assignment" element={<AdminOnly><PhoneSystemAssignment /></AdminOnly>} />
-                <Route path="admin/phone-system/recording-settings" element={<AdminOnly><PhoneSystemRecording /></AdminOnly>} />
-                <Route path="admin/phone-system/voicemail" element={<AdminOnly><PhoneSystemVoicemail /></AdminOnly>} />
-                <Route path="admin/phone-system/ivr" element={<AdminOnly><PhoneSystemIvr /></AdminOnly>} />
-                <Route path="admin/phone-system/did-management" element={<AdminOnly><DIDManagement /></AdminOnly>} />
-                <Route path="admin/phone-system/did-settings" element={<AdminOnly><DIDReputationSettings /></AdminOnly>} />
-                <Route path="admin/phone-system/did/:didId" element={<AdminOnly><DIDHealthReport /></AdminOnly>} />
+                {/* Phone System — admin/super_admin, or a manager granted a phone-system permission */}
+                <Route path="admin/phone-system/numbers" element={<Admin anyPermission={PHONESYS_PERMS}><PhoneNumbers /></Admin>} />
+                <Route path="admin/phone-system/assignment" element={<Admin anyPermission={["can_manage_phone_numbers", "can_manage_routing"]}><PhoneSystemAssignment /></Admin>} />
+                <Route path="admin/phone-system/recording-settings" element={<Admin anyPermission={["can_manage_phone_numbers", "can_manage_dialing_settings"]}><PhoneSystemRecording /></Admin>} />
+                <Route path="admin/phone-system/voicemail" element={<Admin anyPermission={["can_manage_phone_numbers", "can_manage_routing"]}><PhoneSystemVoicemail /></Admin>} />
+                <Route path="admin/phone-system/ivr" element={<Admin anyPermission={["can_manage_routing"]}><PhoneSystemIvr /></Admin>} />
+                <Route path="admin/phone-system/did-management" element={<Admin anyPermission={PHONESYS_PERMS}><DIDManagement /></Admin>} />
+                <Route path="admin/phone-system/did-settings" element={<Admin anyPermission={["can_manage_phone_numbers", "can_manage_dialing_settings"]}><DIDReputationSettings /></Admin>} />
+                <Route path="admin/phone-system/did/:didId" element={<Admin anyPermission={PHONESYS_PERMS}><DIDHealthReport /></Admin>} />
 
                 <Route
                   path="leaderboard"
@@ -250,7 +244,7 @@ export default function App() {
                 <Route
                   path="knowledge"
                   element={
-                    <RequireRole roles={["admin", "manager", "super_admin"]} loginPath="/admin/login" anyPermission={["view_knowledge_center"]}>
+                    <RequireRole roles={["admin", "manager", "super_admin"]} loginPath="/admin/login" anyPermission={["can_access_knowledge_center", "can_view_knowledge_admin"]}>
                       <KnowledgeCenter />
                     </RequireRole>
                   }
