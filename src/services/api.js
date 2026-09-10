@@ -7,7 +7,11 @@ const USER_KEY = "10x-power-dialer:user";
 const SESSION_ID_KEY = "10x-power-dialer:session_id";
 const LOGOUT_REASON_KEY = "logout_reason";
 
-export const api = axios.create({ baseURL: BASE_URL, timeout: 20000 });
+// 45s: dialer endpoints (preview/next, preview/dial) do a chain of
+// DB round trips to Railway's Supabase and can legitimately take 10-20s
+// under load. A shorter ceiling surfaces slow-but-successful calls to the
+// agent as "Could not reach the server", which reads as an outage.
+export const api = axios.create({ baseURL: BASE_URL, timeout: 45000 });
 
 // Attach the JWT to every outgoing request.
 api.interceptors.request.use(async (config) => {

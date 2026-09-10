@@ -1398,15 +1398,21 @@ function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, re
 
   if (!lead) {
     const noMoreLeads = message === "No more leads available.";
+    const outsideHours = typeof message === "string" && message.startsWith("No leads are callable");
     return (
       <div className="card flex flex-col items-center justify-center gap-3 py-16 text-center">
         <PhoneCall size={32} className="text-[var(--color-text-tertiary)]" />
         <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-          {loading ? "Loading next lead…" : message || "No lead loaded"}
+          {loading ? "Loading next lead…" : outsideHours ? "No leads available right now" : message || "No lead loaded"}
         </p>
         {!loading && noMoreLeads && (
           <p className="mx-auto max-w-sm text-sm text-[var(--color-text-tertiary)]">
             Every lead in this campaign has been dialed, is on the Do Not Call list, or isn't currently callable.
+          </p>
+        )}
+        {!loading && outsideHours && (
+          <p className="mx-auto max-w-sm text-sm text-[var(--color-text-tertiary)]">
+            The remaining leads are outside their local calling hours. They become available automatically — check back shortly.
           </p>
         )}
         {!loading && (
