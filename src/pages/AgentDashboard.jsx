@@ -2139,6 +2139,9 @@ function SmsForm({ campaign, lead, callId, onSent }) {
     try {
       const appt = await smsService.createAppointment({
         campaign_id: campaign.id,
+        // Without the lead the template has no name to fill in, and the text
+        // is not filed under the customer.
+        lead_id: lead.id || null,
         call_id: callId || null,
         title: `${campaign.name} appointment`,
         // Sent only when the agent actually set one. An empty field means no
