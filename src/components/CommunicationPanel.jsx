@@ -21,7 +21,7 @@ export default function CommunicationPanel({ campaign, lead, activeCallId, onOpe
   if (!lead?.id || (!emailEnabled && !smsEnabled)) return null;
 
   const email = (lead.email || lead.email2 || "").trim();
-  const phone = (lead.phone || "").trim();
+  const phone = (lead.phone || lead.phone2 || "").trim();
   const hasEmail = EMAIL_RE.test(email);
   const hasPhone = phone.replace(/[^\d]/g, "").length >= 7;
   const firstName = (lead.fullName || "").trim().split(/\s+/)[0] || "this lead";

@@ -2118,6 +2118,10 @@ function SmsForm({ campaign, lead, callId, onSent }) {
   const [appointmentId, setAppointmentId] = useState(null);
   const [conversationId, setConversationId] = useState(null);
   const [busy, setBusy] = useState(false);
+  // The lead's two numbers; the agent picks which one this text goes to.
+  const phoneOptions = [lead.phone, lead.phone2].filter((p, i, a) => p && a.indexOf(p) === i);
+  const [chosenPhone, setChosenPhone] = useState("");
+  const sendTo = phoneOptions.includes(chosenPhone) ? chosenPhone : phoneOptions[0] || "";
 
   // Booked and rendered together: the template can only quote a date and
   // address once there is an appointment record holding them.
@@ -2158,7 +2162,7 @@ function SmsForm({ campaign, lead, callId, onSent }) {
     try {
       const res = await smsService.sendConfirmation(appointmentId, {
         body,
-        to_number: lead.phone,
+        to_number: sendTo,
       });
       setConversationId(res?.data?.conversation?.id || null);
       notify("Confirmation sent.", "success");
@@ -2222,10 +2226,18 @@ function SmsForm({ campaign, lead, callId, onSent }) {
 
       <div>
         <label className="mb-1.5 block text-xs font-medium text-[var(--color-text-secondary)]">Sending To</label>
-        <input value={lead.phone} readOnly className="input-field bg-[var(--color-bg)]" />
+        {phoneOptions.length > 1 ? (
+          <select value={sendTo} onChange={(e) => setChosenPhone(e.target.value)} className="input-field">
+            {phoneOptions.map((p, i) => (
+              <option key={p} value={p}>{p}{i === 0 ? " (primary)" : " (phone 2)"}</option>
+            ))}
+          </select>
+        ) : (
+          <input value={lead.phone} readOnly className="input-field bg-[var(--color-bg)]" />
+        )}
       </div>
 
-      <button onClick={send} disabled={busy || !body.trim() || !lead.phone} className="btn-purple w-full py-3 disabled:opacity-40">
+      <button onClick={send} disabled={busy || !body.trim() || !sendTo} className="btn-purple w-full py-3 disabled:opacity-40">
         {busy ? "Working…" : "Send Confirmation SMS"}
       </button>
       <p className="text-[11px] text-[var(--color-text-tertiary)]">
