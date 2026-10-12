@@ -380,6 +380,8 @@ export default function AgentDashboard() {
   const [activeCallId, setActiveCallId] = useState(null);
   const [smsOpen, setSmsOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+  const composerOpenRef = useRef(false);
+  composerOpenRef.current = smsOpen || emailOpen;
   const [smsSent, setSmsSent] = useState(false);
   const [smsNote, setSmsNote] = useState("");
   const [manualDialNumber, setManualDialNumber] = useState("");
@@ -573,7 +575,13 @@ export default function AgentDashboard() {
       chimePlayedRef.current = false;
       return;
     }
-    const id = setInterval(() => setWrapSeconds((s) => s + 1), 1000);
+    // The clock stands still while the SMS / email composer is open: an agent
+    // writing the customer's confirmation is doing wrap-up work, and the old
+    // behaviour logged them out mid-message.
+    const id = setInterval(() => {
+      if (composerOpenRef.current) return;
+      setWrapSeconds((s) => s + 1);
+    }, 1000);
     return () => clearInterval(id);
   }, [callState, sessionEnded]);
 

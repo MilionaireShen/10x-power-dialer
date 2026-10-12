@@ -45,7 +45,16 @@ export function useCallRecording({ softphone, enabled = true }) {
     const recorder = recorderRef.current;
     const uploader = uploaderRef.current;
     const sessionId = sessionIdRef.current;
+    const startedAt = startedAtRef.current;
+    // Every ref is released up front, not in a finally after the awaits below:
+    // finalizing can take seconds, and the agent's next call (preview mode
+    // dials straight away) starts recording in that window. Clearing the refs
+    // afterwards wiped the NEW call's session id, so it was never finalized
+    // and sat in 'finalizing' forever.
     recorderRef.current = null;
+    sessionIdRef.current = null;
+    uploaderRef.current = null;
+    startedAtRef.current = null;
     activeCallRef.current = null;
 
     if (!recorder || !sessionId) return;
@@ -66,8 +75,8 @@ export function useCallRecording({ softphone, enabled = true }) {
       // here, while the page is still alive.
       if (uploader?.stats?.failed) await uploader.drain();
 
-      const durationSeconds = startedAtRef.current
-        ? Math.round((Date.now() - startedAtRef.current) / 1000)
+      const durationSeconds = startedAt
+        ? Math.round((Date.now() - startedAt) / 1000)
         : null;
 
       const res = await recordingService.finalize(sessionId, {
@@ -81,10 +90,6 @@ export function useCallRecording({ softphone, enabled = true }) {
       setStatus("failed");
       setError(err?.message || "Could not finalize the recording.");
       log("finalize failed:", err);
-    } finally {
-      sessionIdRef.current = null;
-      uploaderRef.current = null;
-      startedAtRef.current = null;
     }
   }, []);
 
@@ -111,6 +116,9 @@ export function useCallRecording({ softphone, enabled = true }) {
       });
       const sessionId = created?.data?.id;
       if (!sessionId) throw new Error("No recording session id returned.");
+      // The call ended while the session was being created: there is nothing
+      // left to record, and starting a recorder now would never be stopped.
+      if (!activeCallRef.current) return;
       sessionIdRef.current = sessionId;
       startedAtRef.current = Date.now();
 
@@ -160,11 +168,17 @@ export function useCallRecording({ softphone, enabled = true }) {
       //
       // Refused rather than recorded when the check itself fails: not knowing
       // whether recording is permitted is not a reason to record.
-      let cancelled = false;
+      //
+      // The result is dropped only if this call has ended (the slot was
+      // released or taken by another call) — NOT when the effect merely
+      // re-runs. Cancelling on re-run discarded the answer while leaving the
+      // slot claimed, so that call was never recorded and neither was any
+      // later one until the phase left 'connected'.
+      const claim = activeCallRef.current;
       adminService
         .shouldRecord({ campaign_id: ctx?.campaignId, did_id: ctx?.didId })
         .then((res) => {
-          if (cancelled) return;
+          if (activeCallRef.current !== claim) return;
           if (res?.data?.record === false) {
             activeCallRef.current = null;
             setStatus("disabled");
@@ -173,13 +187,12 @@ export function useCallRecording({ softphone, enabled = true }) {
           startRecording();
         })
         .catch(() => {
-          if (cancelled) return;
+          if (activeCallRef.current !== claim) return;
           activeCallRef.current = null;
           setStatus("disabled");
           setError("Could not confirm that recording is permitted, so this call was not recorded.");
         });
-
-      return () => { cancelled = true; };
+      return undefined;
     }
 
     if (!connected && activeCallRef.current) {
