@@ -60,7 +60,12 @@ export default function EmailComposer({ campaign, lead, callId, onSent, presetTy
   const [sentType, setSentType] = useState(null);
   const subjectTouched = useRef(false);
 
-  const leadEmail = (lead?.email || "").trim();
+  // The lead's two addresses; the agent picks which one this email goes to.
+  const emailOptions = [lead?.email, lead?.email2]
+    .map((e) => (e || "").trim())
+    .filter((e, i, a) => EMAIL_RE.test(e) && a.indexOf(e) === i);
+  const [chosenEmail, setChosenEmail] = useState("");
+  const leadEmail = emailOptions.includes(chosenEmail) ? chosenEmail : emailOptions[0] || "";
   const hasEmail = EMAIL_RE.test(leadEmail);
   const isPayment = emailType === "payment";
   const paymentLinkOk = !isPayment || isValidStripeLink(paymentLink);
@@ -242,7 +247,15 @@ export default function EmailComposer({ campaign, lead, callId, onSent, presetTy
       </div>
 
       <Field label="To">
-        <input value={leadEmail} readOnly className="input-field bg-[var(--color-bg)]" />
+        {emailOptions.length > 1 ? (
+          <select value={leadEmail} onChange={(e) => setChosenEmail(e.target.value)} className="input-field">
+            {emailOptions.map((e, i) => (
+              <option key={e} value={e}>{e}{i === 0 ? " (primary)" : " (email 2)"}</option>
+            ))}
+          </select>
+        ) : (
+          <input value={leadEmail} readOnly className="input-field bg-[var(--color-bg)]" />
+        )}
       </Field>
 
       <Field label="From">

@@ -46,9 +46,11 @@ const dialerService = {
 
   // Places the real outbound call for the lead currently reserved to this
   // agent (DIAL button).
-  previewDial: (campaignId, leadId) =>
+  // phoneSlot: "primary" (default, the number the dialer uses) or "secondary"
+  // (the lead's Phone 2 — only ever by the agent's explicit choice).
+  previewDial: (campaignId, leadId, phoneSlot) =>
     api
-      .post("/dialer/preview/dial", { campaign_id: campaignId, lead_id: leadId })
+      .post("/dialer/preview/dial", { campaign_id: campaignId, lead_id: leadId, ...(phoneSlot === "secondary" ? { phone_slot: "secondary" } : {}) })
       .then((r) => r.data),
 };
 

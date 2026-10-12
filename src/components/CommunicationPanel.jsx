@@ -20,7 +20,7 @@ export default function CommunicationPanel({ campaign, lead, activeCallId, onOpe
   // Nothing to offer: no lead loaded, or the campaign has neither channel.
   if (!lead?.id || (!emailEnabled && !smsEnabled)) return null;
 
-  const email = (lead.email || "").trim();
+  const email = (lead.email || lead.email2 || "").trim();
   const phone = (lead.phone || "").trim();
   const hasEmail = EMAIL_RE.test(email);
   const hasPhone = phone.replace(/[^\d]/g, "").length >= 7;

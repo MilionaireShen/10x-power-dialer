@@ -43,7 +43,9 @@ const LEAD_FIELD_COLUMN = {
   firstName: "first_name",
   lastName: "last_name",
   phone: "phone_number",
+  phone2: "phone_number_2",
   email: "email",
+  email2: "email_2",
   street: "street_address",
   city: "city",
   state: "state",
@@ -96,7 +98,9 @@ function buildEmptyLead() {
   return {
     fullName: "",
     phone: "",
+    phone2: "",
     email: "",
+    email2: "",
     street: "",
     city: "",
     state: "",
@@ -139,7 +143,9 @@ function mapLeadFromApi(payload) {
     id: l.id,
     fullName: [l.first_name, l.last_name].filter(Boolean).join(" ") || "Unknown Contact",
     phone: l.phone_number || "",
+    phone2: l.phone_number_2 || "",
     email: l.email || "",
+    email2: l.email_2 || "",
     street: l.street_address || "",
     city: l.city || "",
     state: l.state || "",
@@ -925,16 +931,17 @@ export default function AgentDashboard() {
     loadPreviewLead(previewLead?.id);
   };
 
-  const handlePreviewDial = () => {
+  const handlePreviewDial = (slot) => {
     if (!previewLead || previewDialing || previewLoading) return;
+    const secondary = slot === "secondary";
     setPreviewDialing(true);
     dialerService
-      .previewDial(campaign.id, previewLead.id)
+      .previewDial(campaign.id, previewLead.id, secondary ? "secondary" : undefined)
       .then((res) => {
         const callId = res?.data?.call?.id;
         if (callId) {
           setActiveCallId(callId);
-          recording?.setCallContext?.({ callId, toNumber: previewLead.phone, direction: "outbound" });
+          recording?.setCallContext?.({ callId, toNumber: secondary ? previewLead.phone2 : previewLead.phone, direction: "outbound" });
         }
         // Nothing else to do here — the agent's own leg now rings via the
         // same Telnyx-dialed-agent-leg path progressive mode already uses,
@@ -1393,7 +1400,8 @@ function WaitingState({
           message={previewMessage}
           loading={previewLoading}
           dialing={previewDialing}
-          onDial={onPreviewDial}
+          onDial={() => onPreviewDial()}
+          onDialSecondary={() => onPreviewDial("secondary")}
           onNext={onPreviewNext}
           registered={registered}
           leadLayout={leadLayout}
@@ -1470,7 +1478,7 @@ function WaitingState({
 // decides to call it. `lead` is only ever the one currently reserved to
 // this agent (see getNextPreviewLead in dialingEngine.js) — never a list,
 // never preloaded ahead, matching spec's "one lead at a time" requirement.
-function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, registered, leadLayout }) {
+function PreviewDialerCard({ lead, message, loading, dialing, onDial, onDialSecondary, onNext, registered, leadLayout }) {
   const busy = loading || dialing;
 
   if (!lead) {
@@ -1517,6 +1525,9 @@ function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, re
           </p>
         )}
         <p className="mt-1 text-lg text-[var(--color-text-secondary)]">{lead.phone || "No phone number on file"}</p>
+        {lead.phone2 && (
+          <p className="text-sm text-[var(--color-text-tertiary)]">Phone 2: {lead.phone2}</p>
+        )}
 
         {isVacation && (lead.lastTravelDate || lead.lastTravelDestination) && (
           <div className="mx-auto mt-3 max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-left">
@@ -1554,6 +1565,16 @@ function PreviewDialerCard({ lead, message, loading, dialing, onDial, onNext, re
         >
           <PhoneCall size={18} /> {dialing ? "Calling…" : "Dial"}
         </button>
+        {lead.phone2 && (
+          <button
+            onClick={onDialSecondary}
+            disabled={busy || !registered}
+            className="btn-outline flex items-center justify-center gap-2 py-2.5 text-sm"
+            title={`Call the second number instead (${lead.phone2})`}
+          >
+            <PhoneCall size={15} /> Dial Phone 2
+          </button>
+        )}
         <button onClick={onNext} disabled={busy} className="btn-outline flex items-center justify-center gap-2 py-3 text-base">
           Next <ChevronDown size={16} className="-rotate-90" />
         </button>

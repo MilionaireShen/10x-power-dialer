@@ -17,6 +17,8 @@ const LEAD_KEYS = {
   phone_number: "phone",
   phone: "phone",
   email: "email",
+  phone_number_2: "phone2",
+  email_2: "email2",
   street_address: "street",
   address: "street",
   city: "city",
